@@ -3,7 +3,7 @@
 # ║  One-command orchestration for the eBPF security pipeline   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-.PHONY: help up down demo logs test forwarder install port-forward clean
+.PHONY: help up down logs test forwarder install port-forward clean
 
 SHELL := /bin/bash
 
@@ -45,11 +45,6 @@ forwarder: ## Start the event forwarder (live tetra mode)
 
 forwarder-offline: ## Start the forwarder in offline mode (sample data)
 	$(VENV_DIR)/bin/python -m forwarder.main --file fixtures/sample-tetragon-raw.jsonl
-
-# ── Demo ──────────────────────────────────────────────────────────
-
-demo: ## Run the attack simulation demo
-	@bash scripts/run-demo.sh
 
 # ── Testing ───────────────────────────────────────────────────────
 

@@ -299,7 +299,7 @@ function LiveNodeGraph({ cluster, events }) {
   return (
     <div className="w-full h-full flex relative">
       <div className={`flex-1 flex flex-col justify-center items-center transition-all ${selectedNodeId ? 'w-2/3 pr-64' : 'w-full'}`}>
-        <svg className="w-full max-h-[580px]" viewBox="20 50 640 480" preserveAspectRatio="xMidYMid meet">
+        <svg className="w-full max-h-[580px]" viewBox="0 20 700 510" preserveAspectRatio="xMidYMid meet">
           {renderLines()}
           {mapNodes.map(renderNode)}
 

