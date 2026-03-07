@@ -13,6 +13,7 @@ build/
 # Environment
 .env
 .env.local
+sentinel-opus-master-prompt.md
 
 # IDE
 .vscode/

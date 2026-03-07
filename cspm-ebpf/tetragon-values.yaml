@@ -1,0 +1,18 @@
+extraVolumes:
+  - name: tracefs
+    hostPath:
+      path: /sys/kernel/tracing
+      type: DirectoryOrCreate
+  - name: debugfs
+    hostPath:
+      path: /sys/kernel/debug
+      type: DirectoryOrCreate
+
+tetragon:
+  extraVolumeMounts:
+    - name: tracefs
+      mountPath: /sys/kernel/tracing
+      mountPropagation: Bidirectional
+    - name: debugfs
+      mountPath: /sys/kernel/debug
+      mountPropagation: Bidirectional
