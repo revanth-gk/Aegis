@@ -57,7 +57,12 @@ export default function ForensicsPanel() {
     setIsNeutralizing(true)
     const result = await neutralizeEvent(selectedEvent.event_id)
     setIsNeutralizing(false)
-    if (result) setNeutralized(true)
+    if (result && !result.error) {
+      setNeutralized(true)
+    } else {
+      console.error("Remediation failed:", result?.error)
+      alert(`Remediation failed: ${result?.error || 'Unknown error'}`)
+    }
   }
 
   // Empty state
