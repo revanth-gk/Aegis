@@ -15,6 +15,10 @@ mkdir -p bin
 export PATH="$PWD/bin:$PATH"
 
 echo "[1/6] Checking tooling dependencies..."
+if ! docker ps &>/dev/null; then
+    echo "  ✖ Error: Docker is not running or accessible. Please start Docker first."
+    exit 1
+fi
 if ! command -v kind &>/dev/null; then
     echo "  ↳ Downloading kind..."
     curl -sLo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
@@ -41,9 +45,26 @@ CLUSTER_NAME="sentinel-cluster"
 # ── 2. Kubernetes Cluster ────────────────────────────────────────
 echo ""
 echo "[2/6] Provisioning Kubernetes cluster..."
+
+mkdir -p /tmp
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
-    echo "  ✓ Cluster '${CLUSTER_NAME}' already exists"
+    echo "  ↳ Cluster '${CLUSTER_NAME}' exists, checking health..."
+    # Always update kubeconfig in case the port mapping changed
+    kind export kubeconfig --name "${CLUSTER_NAME}" >/dev/null 2>&1
+    
+    if ! kubectl cluster-info &>/dev/null; then
+        echo "  ⚠ Cluster is unreachable (EOF/Reset). Force-recreating..."
+        kind delete cluster --name "${CLUSTER_NAME}"
+        CLUSTER_EXISTS=false
+    else
+        echo "  ✓ Cluster is healthy and reachable"
+        CLUSTER_EXISTS=true
+    fi
 else
+    CLUSTER_EXISTS=false
+fi
+
+if [ "$CLUSTER_EXISTS" = false ]; then
     echo "  ↳ Creating kind cluster with kernel debug/trace mounts..."
     cat > /tmp/kind-config.yaml <<'KINDEOF'
 kind: Cluster
@@ -58,8 +79,9 @@ nodes:
     containerPath: /sys/kernel/tracing
     propagation: Bidirectional
 KINDEOF
-    kind create cluster --name "${CLUSTER_NAME}" --config /tmp/kind-config.yaml
+    kind create cluster --name "${CLUSTER_NAME}" --config /tmp/kind-config.yaml --wait 5m
     rm -f /tmp/kind-config.yaml
+    kind export kubeconfig --name "${CLUSTER_NAME}"
 fi
 
 # Mount tracefs/debugfs inside the Kind node (required for eBPF on Arch)
