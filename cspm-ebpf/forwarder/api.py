@@ -1,3 +1,4 @@
+import os
 """
 Sentinel-Core Event Forwarder — FastAPI Health, Metrics & Unified Analysis API
 
@@ -6,6 +7,8 @@ Provides liveness probes, metrics, recent-events, and the single unified
   Detection → Triage (GUIDE) → Action (eBPF-LSM) → Reasoning (RAG) → Remediation (YAML)
 """
 
+import json
+import asyncio
 import time
 import uuid
 import datetime
@@ -15,7 +18,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI(
     title="Sentinel-Core Security Platform",
@@ -38,12 +41,15 @@ _lock = Lock()
 _metrics: dict[str, Any] = {
     "events_total": 0,
     "events_by_type": {},
+    "severity_breakdown": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+    "triage_breakdown": {"TP": 0, "BP": 0, "FP": 0, "UNKNOWN": 0},
     "errors_total": 0,
     "last_event_timestamp": None,
     "start_time": time.time(),
     "redis_connected": False,
 }
 _recent_events: deque[dict] = deque(maxlen=100)
+_sse_queues: set[asyncio.Queue] = set()
 _ml_triage: Any = None
 
 
@@ -58,9 +64,23 @@ def record_event(event: dict) -> None:
     with _lock:
         _metrics["events_total"] += 1
         _metrics["last_event_timestamp"] = event.get("timestamp")
+        
         etype = event.get("event_type", "unknown")
         _metrics["events_by_type"][etype] = _metrics["events_by_type"].get(etype, 0) + 1
+        
+        # Track severity breakdown
+        severity = event.get("severity") or (event.get("triage", {}).get("grade") == "TP" and "high") or "medium"
+        _metrics["severity_breakdown"][severity] = _metrics["severity_breakdown"].get(severity, 0) + 1
+        
+        # Track triage breakdown
+        grade = event.get("triage", {}).get("grade", "UNKNOWN")
+        _metrics["triage_breakdown"][grade] = _metrics["triage_breakdown"].get(grade, 0) + 1
+        
         _recent_events.appendleft(event)
+        
+        # Push to all active SSE subscribers
+        for q in _sse_queues:
+            asyncio.run_coroutine_threadsafe(q.put(event), asyncio.get_event_loop())
 
 
 def record_error() -> None:
@@ -371,13 +391,30 @@ async def latest_events(limit: int = 20):
 
 
 @app.get("/events/stream")
-async def event_stream_info():
-    """Info about how to consume events."""
-    return {
-        "redis_stream": "sentinel:events",
-        "consume_command": "redis-cli XREAD BLOCK 0 STREAMS sentinel:events $",
-        "api_latest": "/events/latest?limit=50",
-    }
+async def sse_event_stream():
+    """Real-time Server-Sent Events stream of processed security events."""
+    queue = asyncio.Queue()
+    _sse_queues.add(queue)
+
+    async def event_generator():
+        try:
+            # Yield initial connect event
+            yield "data: {\"status\": \"connected\"}\n\n"
+            while True:
+                event = await queue.get()
+                # Use normalize structure similar to what dashboard expects
+                yield f"data: {json.dumps(event)}\n\n"
+        except asyncio.CancelledError:
+            _sse_queues.remove(queue)
+            raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/events/stream")
+async def api_sse_event_stream():
+    """Alias for /events/stream to match dashboard prefixing if needed."""
+    return await sse_event_stream()
 
 
 @app.get("/")
@@ -586,3 +623,71 @@ async def triage_event(event: dict):
     Kept for backwards compatibility.
     """
     return await sentinel_analyze(event)
+
+# ── Dashboard API Endpoints (Mocks for real-time Frontend payload init) ───────
+
+@app.get("/api/metrics")
+async def api_metrics():
+    with _lock:
+        return {
+            "events_total": _metrics["events_total"],
+            "events_by_type": _metrics["events_by_type"],
+            "severity_breakdown": _metrics["severity_breakdown"],
+            "active_alerts": _metrics["severity_breakdown"].get("critical", 0) + _metrics["severity_breakdown"].get("high", 0),
+            "last_event_timestamp": _metrics["last_event_timestamp"] or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+@app.get("/api/events")
+async def api_events():
+    with _lock:
+        return {"events": list(_recent_events)[:100]}
+
+@app.get("/api/cluster")
+async def api_cluster():
+    with _lock:
+        return {
+            "nodes": [{"name": os.getenv("NODE_NAME", "sentinel-cluster-control-plane"), "status": "Ready", "roles": ["control-plane"], "cpu_usage": 45, "mem_usage": 60}],
+            "pods_active": len(set(e.get("detection", {}).get("pod_name", "unknown") for e in _recent_events)),
+            "ebpf_agents": 1
+        }
+
+@app.get("/api/policies")
+async def api_policies():
+    return {
+        "policies": [
+            {"name": "sentinel-privilege-escalation", "status": "active", "mode": "monitor"},
+            {"name": "sentinel-network-exfil", "status": "active", "mode": "monitor"}
+        ]
+    }
+
+@app.get("/api/triage/stats")
+async def api_triage_stats():
+    with _lock:
+        b = _metrics.get("triage_breakdown", {})
+        return {
+            "true_positives": b.get("TP", 0),
+            "benign_positives": b.get("BP", 0),
+            "false_positives": b.get("FP", 0),
+            "unknown": b.get("UNKNOWN", 0),
+            "total_triaged": _metrics["events_total"],
+            "breakdown": b
+        }
+
+@app.get("/api/events/timeline")
+async def api_events_timeline():
+    return {"buckets": []}
+
+@app.get("/api/immunity-score")
+async def api_immunity_score():
+    with _lock:
+        total = max(_metrics["events_total"], 1)
+        score = 100 - int((_metrics.get("triage_breakdown", {}).get("TP", 0) / total) * 100)
+        return {"score": max(50, score), "enforcement_mode": "shadow"}
+
+@app.post("/api/neutralize/{event_id}")
+async def api_neutralize(event_id: str):
+    return {"status": "success", "message": f"Event {event_id} neutralized"}
+
+@app.post("/api/enforcement/mode")
+async def api_enforcement_mode(request: dict):
+    return {"status": "success", "mode": request.get("mode", "monitor")}

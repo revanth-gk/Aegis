@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ============================================================================
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST")

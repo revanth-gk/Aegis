@@ -61,6 +61,9 @@ class EventPublisher:
         """
         event_json = json.dumps(event, default=str)
 
+        # Always print to stdout so user can see raw JSON outputs
+        print(event_json, flush=True)
+
         # Try Redis first
         if self._connected and self._redis is not None:
             try:
@@ -75,8 +78,6 @@ class EventPublisher:
                 logger.warning("Redis publish failed (%s). Falling back to stdout.", e)
                 self._connected = False
 
-        # Fallback: stdout
-        print(event_json, flush=True)
         return None
 
     def close(self) -> None:

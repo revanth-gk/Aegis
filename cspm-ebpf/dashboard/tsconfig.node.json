@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
+    "composite": true,
     "target": "ES2022",
+    "allowJs": true,
     "lib": ["ES2023"],
     "module": "ESNext",
     "skipLibCheck": true,
@@ -9,6 +11,7 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,
+
     "strict": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,

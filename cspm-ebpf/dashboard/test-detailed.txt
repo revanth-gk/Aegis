@@ -1,0 +1,75 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/revanth/sandbox/cspm-ebpf/dashboard[39m
+
+ [31m×[39m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty 1: Bug Condition - CommandCenter Renders Successfully[2m > [22mshould render CommandCenter without runtime errors when useState is properly imported[32m 36[2mms[22m[39m
+[31m   → useState is not defined[39m
+ [31m×[39m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty 1: Bug Condition - CommandCenter Renders Successfully[2m > [22mshould render CommandCenter with useState functionality working correctly[32m 5[2mms[22m[39m
+[31m   → useState is not defined[39m
+ [31m×[39m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty-Based Test: CommandCenter renders across various state configurations[2m > [22mshould render successfully with property-based generated state values[32m 5[2mms[22m[39m
+[31m   → Property failed after 1 tests
+{ seed: 971801701, path: "0:0:0", endOnFailure: true }
+Counterexample: [0,0,0]
+Shrunk 2 time(s)
+
+Hint: Enable verbose mode in order to have the list of all failing values encountered during the run[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 3 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty 1: Bug Condition - CommandCenter Renders Successfully[2m > [22mshould render CommandCenter without runtime errors when useState is properly imported
+[41m[1m FAIL [22m[49m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty 1: Bug Condition - CommandCenter Renders Successfully[2m > [22mshould render CommandCenter with useState functionality working correctly
+[31m[1mReferenceError[22m: useState is not defined[39m
+[36m [2m❯[22m LiveNodeGraph src/components/CommandCenter.jsx:[2m213:47[22m[39m
+    [90m211| [39m  }
+    [90m212| [39m
+    [90m213| [39m  [35mconst[39m [selectedNodeId[33m,[39m setSelectedNodeId] [33m=[39m [34museState[39m([35mnull[39m)
+    [90m   | [39m                                              [31m^[39m
+    [90m214| [39m
+    [90m215| [39m  [90m// Pre-define nodes with wider spacing[39m
+[90m [2m❯[22m Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:[2m25904:20[22m[39m
+[90m [2m❯[22m renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:[2m7662:22[22m[39m
+[90m [2m❯[22m updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:[2m10166:19[22m[39m
+[90m [2m❯[22m beginWork node_modules/react-dom/cjs/react-dom-client.development.js:[2m11778:18[22m[39m
+[90m [2m❯[22m runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:[2m874:13[22m[39m
+[90m [2m❯[22m performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:[2m17641:22[22m[39m
+[90m [2m❯[22m workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:[2m17469:41[22m[39m
+[90m [2m❯[22m renderRootSync node_modules/react-dom/cjs/react-dom-client.development.js:[2m17450:11[22m[39m
+[90m [2m❯[22m performWorkOnRoot node_modules/react-dom/cjs/react-dom-client.development.js:[2m16583:35[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/components/CommandCenter.test.jsx[2m > [22mCommandCenter Bug Condition Exploration[2m > [22mProperty-Based Test: CommandCenter renders across various state configurations[2m > [22mshould render successfully with property-based generated state values
+[31m[1mError[22m: Property failed after 1 tests
+{ seed: 971801701, path: "0:0:0", endOnFailure: true }
+Counterexample: [0,0,0]
+Shrunk 2 time(s)
+
+Hint: Enable verbose mode in order to have the list of all failing values encountered during the run[39m
+[90m [2m❯[22m buildError node_modules/fast-check/lib/check/runner/utils/RunDetailsFormatter.js:[2m156:19[22m[39m
+[90m [2m❯[22m throwIfFailed node_modules/fast-check/lib/check/runner/utils/RunDetailsFormatter.js:[2m165:11[22m[39m
+[90m [2m❯[22m reportRunDetails node_modules/fast-check/lib/check/runner/utils/RunDetailsFormatter.js:[2m178:16[22m[39m
+[90m [2m❯[22m Proxy.assert node_modules/fast-check/lib/check/runner/Runner.js:[2m61:9[22m[39m
+[36m [2m❯[22m src/components/CommandCenter.test.jsx:[2m164:10[22m[39m
+    [90m162| [39m       */[39m
+    [90m163| [39m      
+    [90m164| [39m      fc[33m.[39m[34massert[39m(
+    [90m   | [39m         [31m^[39m
+    [90m165| [39m        fc[33m.[39m[34mproperty[39m(
+    [90m166| [39m          [90m// Generate random but valid immunity scores[39m
+
+[31m[1mCaused by: TypeError[22m: __vite_ssr_import_0__.vi.mocked(...).mockReturnValue is not a function[39m
+[36m [2m❯[22m src/components/CommandCenter.test.jsx:[2m175:53[22m[39m
+[90m [2m❯[22m Property.predicate node_modules/fast-check/lib/check/property/Property.js:[2m14:54[22m[39m
+[90m [2m❯[22m Property.run node_modules/fast-check/lib/check/property/Property.generic.js:[2m43:33[22m[39m
+[90m [2m❯[22m runIt node_modules/fast-check/lib/check/runner/Runner.js:[2m14:30[22m[39m
+[90m [2m❯[22m check node_modules/fast-check/lib/check/runner/Runner.js:[2m54:11[22m[39m
+[90m [2m❯[22m Proxy.assert node_modules/fast-check/lib/check/runner/Runner.js:[2m57:17[22m[39m
+[90m [2m❯[22m src/components/CommandCenter.test.jsx:[2m164:10[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m3 failed[39m[22m[90m (3)[39m
+[2m   Start at [22m 23:28:40
+[2m   Duration [22m 660ms[2m (transform 104ms, setup 73ms, import 150ms, tests 48ms, environment 294ms)[22m
+

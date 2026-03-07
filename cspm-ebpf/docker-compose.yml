@@ -21,6 +21,18 @@ services:
     depends_on:
       chromadb:
         condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - sentinel-net
+
+  # ── Redis ────────────────────────────────────────────────────
+  redis:
+    image: redis:alpine
+    container_name: sentinel-redis
+    ports:
+      - "6379:6379"
     restart: unless-stopped
     networks:
       - sentinel-net

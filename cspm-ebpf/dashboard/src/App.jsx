@@ -9,7 +9,7 @@ import IncidentLedger from './components/IncidentLedger'
 import ForensicsPanel from './components/ForensicsPanel'
 import SyscallTicker from './components/SyscallTicker'
 
-const WS_URL = `ws://${window.location.hostname}:8080/api/ws/events`
+const SSE_URL = `/api/events/stream`
 
 const pageVariants = {
   initial: { opacity: 0, y: 12 },
@@ -30,20 +30,20 @@ function App() {
     fetchImmunityScore,
   } = useStore()
 
-  const wsRef = useRef(null)
+  const sseRef = useRef(null)
   const reconnectTimeout = useRef(null)
 
-  const connectWs = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
+  const connectSse = useCallback(() => {
+    if (sseRef.current && sseRef.current.readyState === EventSource.OPEN) return
 
-    const ws = new WebSocket(WS_URL)
-    wsRef.current = ws
+    const sse = new EventSource(SSE_URL)
+    sseRef.current = sse
 
-    ws.onopen = () => {
+    sse.onopen = () => {
       setWsConnected(true)
     }
 
-    ws.onmessage = (msg) => {
+    sse.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data)
         addEvent(event)
@@ -56,30 +56,30 @@ function App() {
         // Periodically refresh immunity score
         if (Math.random() < 0.3) fetchImmunityScore()
       } catch (e) {
-        console.error('WS parse error:', e)
+        console.error('SSE parse error:', e)
       }
     }
 
-    ws.onclose = () => {
+    sse.onerror = (err) => {
+      console.error('SSE error:', err)
+      sse.close()
       setWsConnected(false)
-      reconnectTimeout.current = setTimeout(connectWs, 3000)
+      reconnectTimeout.current = setTimeout(connectSse, 3000)
     }
-
-    ws.onerror = () => ws.close()
   }, [])
 
   useEffect(() => {
     fetchAllData()
-    connectWs()
+    connectSse()
 
     const interval = setInterval(fetchAllData, 15000)
 
     return () => {
       clearInterval(interval)
-      if (wsRef.current) wsRef.current.close()
+      if (sseRef.current) sseRef.current.close()
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current)
     }
-  }, [fetchAllData, connectWs])
+  }, [fetchAllData, connectSse])
 
   const renderPage = () => {
     switch (currentPage) {

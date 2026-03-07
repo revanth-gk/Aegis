@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 export default function CommandCenter() {
   const {
@@ -32,9 +32,9 @@ export default function CommandCenter() {
     return delta < 60 ? `${Math.round(delta)}s ago` : `${Math.round(delta / 60)}m ago`
   }, [metrics?.last_event_timestamp])
 
-  const tpCount = triageStats?.breakdown?.TruePositive || 0
-  const fpCount = triageStats?.breakdown?.FalsePositive || 0
-  const bpCount = triageStats?.breakdown?.BenignPositive || 0
+  const tpCount = triageStats?.breakdown?.TP || 0
+  const fpCount = triageStats?.breakdown?.FP || 0
+  const bpCount = triageStats?.breakdown?.BP || 0
   const totalTriaged = tpCount + fpCount + bpCount || 1
   const filterRatio = Math.round(((fpCount + bpCount) / totalTriaged) * 100)
 
@@ -63,7 +63,7 @@ export default function CommandCenter() {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold tracking-tight text-destructive drop-shadow-sm">{tpCount}</span>
-            <span className="text-xs text-muted-foreground font-medium">{triageStats?.percentages?.TruePositive || 0}% of events</span>
+            <span className="text-xs text-muted-foreground font-medium">{triageStats?.percentages?.TP || 0}% of events</span>
           </div>
         </div>
 
@@ -161,9 +161,9 @@ export default function CommandCenter() {
               Triage Distribution
             </div>
             <div className="space-y-3">
-              <TriageRow label="True Positive"   count={tpCount}  pct={triageStats?.percentages?.TruePositive || 0}   color="text-destructive font-semibold" barColor="bg-destructive shadow-[0_0_8px_rgba(var(--destructive),0.5)]" />
-              <TriageRow label="Benign Positive" count={bpCount}  pct={triageStats?.percentages?.BenignPositive || 0} color="text-blue-500 font-semibold" barColor="bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-              <TriageRow label="False Positive"  count={fpCount}  pct={triageStats?.percentages?.FalsePositive || 0}  color="text-muted-foreground" barColor="bg-muted" />
+              <TriageRow label="True Positive"   count={tpCount}  pct={triageStats?.percentages?.TP || 0}   color="text-destructive font-semibold" barColor="bg-destructive shadow-[0_0_8px_rgba(var(--destructive),0.5)]" />
+              <TriageRow label="Benign Positive" count={bpCount}  pct={triageStats?.percentages?.BP || 0} color="text-blue-500 font-semibold" barColor="bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+              <TriageRow label="False Positive"  count={fpCount}  pct={triageStats?.percentages?.FP || 0}  color="text-muted-foreground" barColor="bg-muted" />
             </div>
             <div className="mt-4 pt-3 border-t border-border text-xs text-muted-foreground font-mono flex justify-between">
               <span>Model: XGBoost</span>

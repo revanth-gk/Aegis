@@ -9,6 +9,35 @@ import xgboost as xgb
 
 logger = logging.getLogger("sentinel.ml_triage")
 
+def rule_based_triage(event: dict) -> tuple[str, float]:
+    """
+    Fallback rule-based triage when ML model fails.
+    Uses binary field heuristics from Tetragon event.
+    """
+    telemetry = event.get("telemetry", {})
+    binary = telemetry.get("binary", event.get("binary", event.get("process", ""))).lower()
+    path = telemetry.get("file_path", event.get("file_path", event.get("path", ""))).lower()
+    syscall = telemetry.get("syscall", event.get("syscall", event.get("event_type", ""))).lower()
+    uid = telemetry.get("uid", event.get("uid", 1000))
+    namespace = telemetry.get("namespace", event.get("namespace", "default"))
+
+    # High confidence TP rules
+    if any(b in binary for b in ["curl", "wget", "nc", "ncat", "nmap", "nslookup"]):
+        return "TP", 0.95
+    if any(p in path for p in ["/etc/shadow", "/etc/passwd", "/root/", "/proc/sysrq"]):
+        return "TP", 0.97
+    if "reverse" in path or "4444" in path or "1337" in path:
+        return "TP", 0.98
+
+    # Medium confidence BP rules  
+    if any(b in binary for b in ["ps", "top", "netstat", "ss", "id", "whoami"]):
+        return "BP", 0.70
+    if uid == 0 and namespace != "kube-system":
+        return "BP", 0.65
+
+    # Default: FP
+    return "FP", 0.85
+
 class MLTriage:
     """Handles ML-based triage for Sentinel events."""
 
@@ -106,10 +135,11 @@ class MLTriage:
 
         except Exception as e:
             logger.error(f"ML Inference failed: {e}")
+            grade, confidence = rule_based_triage(event)
             return {
-                "triage": {"grade": "TP", "confidence": 0.0},
-                "explanation": {"mitre_id": "N/A", "guidance": f"ML Inference failed: {str(e)}"},
-                "deliverable": "Triage analysis error, treating as serious."
+                "triage": {"grade": grade, "confidence": confidence},
+                "explanation": {"mitre_id": "N/A", "guidance": f"ML Inference failed, using rule-based fallback. Grade: {grade}"},
+                "deliverable": f"ML model error; rule-based triage suggests this is a {grade}."
             }
 
     def _prepare_features(self, event: dict[str, Any]) -> dict[str, Any]:
