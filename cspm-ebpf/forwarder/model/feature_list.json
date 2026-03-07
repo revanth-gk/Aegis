@@ -1,0 +1,21 @@
+{
+  "features": [
+    "uid",
+    "pid",
+    "is_root",
+    "binary_risk",
+    "syscall_risk",
+    "sensitive_path",
+    "event_type",
+    "has_network_args",
+    "is_container",
+    "parent_is_shell"
+  ],
+  "labels": {
+    "0": "FalsePositive",
+    "1": "BenignPositive",
+    "2": "TruePositive"
+  },
+  "version": "1.1",
+  "description": "Sentinel-Core eBPF Event Classifier (Synthetic)"
+}
