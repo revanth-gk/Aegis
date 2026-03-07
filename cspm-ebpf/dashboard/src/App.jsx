@@ -9,7 +9,7 @@ import IncidentLedger from './components/IncidentLedger'
 import ForensicsPanel from './components/ForensicsPanel'
 import SyscallTicker from './components/SyscallTicker'
 
-const WS_URL = `ws://${window.location.hostname}:8080/api/ws/events`
+const WS_URL = `ws://${window.location.host}/api/ws/events`
 
 const pageVariants = {
   initial: { opacity: 0, y: 12 },
