@@ -192,25 +192,29 @@ try:
         if not line or not line.startswith("{"):
             continue
         try:
-            process_line(line, pub)
-            event_count += 1
+            sentinel_event = process_line(line, pub)
+            if sentinel_event:
+                event_count += 1
+                triage = sentinel_event.get("triage", {})
+                grade = triage.get("grade", "UNKNOWN")
+                score = float(triage.get("confidence", 0.0))
 
-            # For TP/BP events, run through the full orchestrator (RAG + Gemini)
-            if rag_enabled and event_count <= 20:
-                try:
-                    raw = json.loads(line)
-                    result = analyze_alert(
-                        raw_event=raw,
-                        guide_score=0.85,
-                        guide_grade="TP",
-                        stream=False
-                    )
-                    if result.get("final_report"):
-                        logger.info("📋 ORCHESTRATOR REPORT:\n%s", result["final_report"][:500])
-                    if result.get("yaml_fix"):
-                        logger.info("🔧 YAML FIX:\n%s", result["yaml_fix"][:300])
-                except Exception as orch_err:
-                    logger.warning("Orchestrator error: %s", orch_err)
+                # For TP/BP events, run through the full orchestrator (RAG + Gemini)
+                if rag_enabled and grade in ("TP", "BP") and event_count <= 20:
+                    try:
+                        raw = json.loads(line)
+                        result = analyze_alert(
+                            raw_event=raw,
+                            guide_score=score,
+                            guide_grade=grade,
+                            stream=False
+                        )
+                        if result.get("final_report"):
+                            logger.info("📋 ORCHESTRATOR REPORT:\n%s", result["final_report"][:500])
+                        if result.get("yaml_fix"):
+                            logger.info("🔧 YAML FIX:\n%s", result["yaml_fix"][:300])
+                    except Exception as orch_err:
+                        logger.warning("Orchestrator error: %s", orch_err)
 
         except Exception as e:
             logger.error("Event decode error: %s", e)

@@ -40,11 +40,11 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ============================================================================
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-pro")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST")
-GOOGLE_EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 MITRE_TOP_K = 3
 AZURE_TOP_K = 2
@@ -59,6 +59,16 @@ _genai_client = None
 _pc_client = None
 _pc_index = None
 _llm = None
+_embeddings_model = None
+
+# --- HuggingFace Embeddings ---
+if not OFFLINE_MODE:
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        _embeddings_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+        logger.info(f"HuggingFace embeddings initialized ({EMBEDDING_MODEL_NAME})")
+    except Exception as e:
+        logger.exception("Failed to initialize HuggingFace embeddings")
 
 # --- Gemini Client (new google-genai SDK) ---
 if GOOGLE_API_KEY and not OFFLINE_MODE:
@@ -350,11 +360,7 @@ def rag_retriever(state: SentinelState) -> dict:
         # --- MITRE retrieval ---
         mitre_context = "No MITRE ATT&CK context found."
         try:
-            m_result = _genai_client.models.embed_content(
-                model=GOOGLE_EMBEDDING_MODEL,
-                contents=mitre_query
-            )
-            m_vec = m_result.embeddings[0].values
+            m_vec = _embeddings_model.embed_query(mitre_query)
             mitre_results = _pc_index.query(
                 vector=m_vec, top_k=MITRE_TOP_K,
                 namespace="mitre", include_metadata=True
@@ -375,11 +381,7 @@ def rag_retriever(state: SentinelState) -> dict:
         # --- Azure retrieval ---
         azure_context = "No Azure Security Benchmark context found."
         try:
-            a_result = _genai_client.models.embed_content(
-                model=GOOGLE_EMBEDDING_MODEL,
-                contents=azure_query
-            )
-            a_vec = a_result.embeddings[0].values
+            a_vec = _embeddings_model.embed_query(azure_query)
             azure_results = _pc_index.query(
                 vector=a_vec, top_k=AZURE_TOP_K,
                 namespace="azure", include_metadata=True

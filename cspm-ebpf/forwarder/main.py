@@ -58,7 +58,7 @@ def start_api_server(config: Config) -> None:
     )
 
 
-def process_line(line: str, publisher: EventPublisher) -> None:
+def process_line(line: str, publisher: EventPublisher) -> dict | None:
     """Parse a single JSON line, transform, and publish."""
     line = line.strip()
     if not line:
@@ -69,11 +69,11 @@ def process_line(line: str, publisher: EventPublisher) -> None:
     except json.JSONDecodeError as e:
         logger.warning("Skipping malformed JSON: %s", e)
         record_error()
-        return
+        return None
 
     sentinel_event = transform_event(raw_event)
     if sentinel_event is None:
-        return  # Not a relevant event type
+        return None  # Not a relevant event type
 
     # Run ML Triage if enabled
     if _ml_triage:
@@ -96,6 +96,7 @@ def process_line(line: str, publisher: EventPublisher) -> None:
         sentinel_event["telemetry"]["binary"],
         sentinel_event["telemetry"].get("pod", "n/a"),
     )
+    return sentinel_event
 
 
 def stream_from_tetra(config: Config, publisher: EventPublisher) -> None:

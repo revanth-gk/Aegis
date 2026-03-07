@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from google import genai
+from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 
 class SentinelIngestor:
@@ -61,9 +61,9 @@ class SentinelIngestor:
         self._pc_index = self._pc_client.Index(host=PINECONE_INDEX_HOST)
         logger.info(f"Pinecone index connected via host: {PINECONE_INDEX_HOST}")
 
-        # google-genai SDK
-        self._genai_client = genai.Client(api_key=GOOGLE_API_KEY)
-        logger.info("Gemini embedding client initialized (google-genai SDK)")
+        # Local HuggingFace embeddings (768-dim)
+        self._embeddings_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+        logger.info(f"HuggingFace embedding client initialized ({EMBEDDING_MODEL_NAME})")
 
         self.stats = {
             "mitre": {"loaded": 0, "embedded": 0, "upserted": 0, "skipped": 0},
@@ -184,22 +184,9 @@ class SentinelIngestor:
         return chunks
 
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using google-genai SDK (one by one to avoid batch 404s)."""
-        all_embeddings = []
-        for i, text in enumerate(texts):
-            result = self._genai_client.models.embed_content(
-                model=GOOGLE_EMBEDDING_MODEL,
-                contents=text
-            )
-            # Depending on SDK, result.embeddings[0].values or result.embeddings[0]
-            # Wait, the SDK docs say result.embeddings returns a list of embeddings.
-            emb = result.embeddings[0].values
-            all_embeddings.append(emb)
-
-            if (i + 1) % 50 == 0 or (i + 1) == len(texts):
-                logger.info(f"Embedded {i + 1}/{len(texts)} texts...")
-
-        return all_embeddings
+        """Generate embeddings using HuggingFace sentence-transformers."""
+        logger.info(f"Generating embeddings for {len(texts)} texts using local model...")
+        return self._embeddings_model.embed_documents(texts)
 
     def upsert_to_pinecone(
         self,
@@ -329,11 +316,11 @@ def main():
         description="Sentinel-Core — Document Ingestion Script"
     )
     parser.add_argument(
-        "mitre_path", nargs="?", default="mitre_attack_v15.json",
+        "mitre_path", nargs="?", default="enterprise-attack.json",
         help="Path to MITRE JSON file"
     )
     parser.add_argument(
-        "azure_path", nargs="?", default="azure_security_benchmark.pdf",
+        "azure_path", nargs="?", default="CIS_Microsoft_Azure_Foundations_Benchmark_v1.0.0.pdf",
         help="Path to Azure PDF file"
     )
     parser.add_argument(

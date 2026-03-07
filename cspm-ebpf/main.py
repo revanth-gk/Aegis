@@ -300,7 +300,10 @@ async def lifespan(app: FastAPI):
     llm_available = _genai_client is not None
     if llm_available:
         try:
-            _genai_client.models.get(model="models/gemini-1.5-pro")
+            model_name = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+            if not model_name.startswith("models/"):
+                model_name = f"models/{model_name}"
+            _genai_client.models.get(model=model_name)
             logger.info("✓ Gemini LLM is reachable")
         except Exception as e:
             llm_available = False
@@ -415,7 +418,10 @@ async def health_check():
 
     if not llm_ok and _genai_client:
         try:
-            _genai_client.models.get(model="models/gemini-1.5-pro")
+            model_name = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+            if not model_name.startswith("models/"):
+                model_name = f"models/{model_name}"
+            _genai_client.models.get(model=model_name)
             llm_ok = True
             app.state.llm_available = True
         except Exception:

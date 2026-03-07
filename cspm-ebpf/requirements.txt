@@ -42,3 +42,7 @@ PyYAML>=6.0
 
 # === HTTP Client ===
 httpx>=0.27.0
+
+# === Local Embeddings ===
+sentence-transformers>=2.6.0
+langchain-huggingface>=0.1.0
