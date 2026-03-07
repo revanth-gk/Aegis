@@ -71,6 +71,8 @@ spec:
         ports:
         - name: http
           containerPort: 8000
+        - name: remediation
+          containerPort: 8002
           protocol: TCP
         
         env:
@@ -154,7 +156,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /api/remediation/health
-            port: http
+            port: remediation
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 5
@@ -163,7 +165,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /api/remediation/health
-            port: http
+            port: remediation
           initialDelaySeconds: 10
           periodSeconds: 10
           timeoutSeconds: 5

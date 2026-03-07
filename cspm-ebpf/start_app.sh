@@ -225,12 +225,23 @@ except KeyboardInterrupt:
     sys.exit(0)
 PYEOF
 
-# Kill any previously running dashboard API
+# Kill any previously running APIs
 pkill -f "python3 dashboard_api.py" || true
-# Start dashboard API on port 8080
+pkill -f "uvicorn remediation.server:app" || true
+pkill -f "uvicorn attacker-dashboard.app:app" || true
+
+# Start APIs
 python3 dashboard_api.py > dashboard_api.log 2>&1 &
 DASHBOARD_PID=$!
 echo "📊 Dashboard API: http://127.0.0.1:8080"
+
+PYTHONPATH="$PWD" python3 -m uvicorn remediation.server:app --host 0.0.0.0 --port 8002 > remediation_api.log 2>&1 &
+REMEDIATION_PID=$!
+echo "🛡️ Remediation API: http://127.0.0.1:8002/api/remediation"
+
+PYTHONPATH="$PWD" python3 -m uvicorn attacker-dashboard.app:app --host 0.0.0.0 --port 8003 > attacker_api.log 2>&1 &
+ATTACKER_PID=$!
+echo "⚔️ Attacker Control: http://127.0.0.1:8003"
 
 echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"

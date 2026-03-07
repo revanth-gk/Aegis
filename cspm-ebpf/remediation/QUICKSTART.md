@@ -130,11 +130,11 @@ python orchestrator.py
 
 ```bash
 # If running locally
-curl http://localhost:8000/api/remediation/health
+curl http://localhost:8002/api/remediation/health
 
 # If running in Kubernetes
 kubectl port-forward -n sentinel-core svc/sentinel-core 8000:8000
-curl http://localhost:8000/api/remediation/health
+curl http://localhost:8002/api/remediation/health
 ```
 
 Expected response:
@@ -157,7 +157,7 @@ Expected response:
 ## Step 7: View Configuration
 
 ```bash
-curl http://localhost:8000/api/remediation/config
+curl http://localhost:8002/api/remediation/config
 ```
 
 Response:
@@ -207,7 +207,7 @@ for record in records:
 export REMEDIATION_DRY_RUN=false
 
 # Or via API
-curl -X POST http://localhost:8000/api/remediation/config \
+curl -X POST http://localhost:8002/api/remediation/config \
   -H "Content-Type: application/json" \
   -d '{"dry_run": false}'
 ```
