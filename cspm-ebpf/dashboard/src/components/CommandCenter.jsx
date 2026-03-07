@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 export default function CommandCenter() {
   const {

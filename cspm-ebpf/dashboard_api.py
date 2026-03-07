@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 """
 Sentinel-Core Dashboard API Server
@@ -99,11 +100,42 @@ _remediation_log: list[dict] = []  # Track remediation actions for UI
 # ── HTTP Client (for proxying forwarder API) ──────────────────────
 _http_client = httpx.AsyncClient(timeout=5.0)
 
+# ============================================================================
+# LIFESPAN
+# ============================================================================
+
+from contextlib import asynccontextmanager
+import asyncio # Make sure asyncio is imported if it wasn't already at top level, handled here for safety before use
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _refresh_event_cache()
+    logger.info("📊 Loaded %d events from Redis into cache", len(_event_cache))
+
+    task1 = asyncio.create_task(_redis_stream_listener())
+    task2 = asyncio.create_task(_periodic_cache_refresh())
+
+    logger.info("=" * 60)
+    logger.info("  SENTINEL-CORE DASHBOARD API — LIVE")
+    logger.info("  Port: %d", DASHBOARD_API_PORT)
+    logger.info("  Redis: %s:%d (%s)", REDIS_HOST, REDIS_PORT, "connected" if _redis else "disconnected")
+    logger.info("  Forwarder: %s", FORWARDER_API_URL)
+    logger.info("  Remediation: %s", "active" if _remediation_agent else "unavailable")
+    logger.info("=" * 60)
+
+    yield
+
+    task1.cancel()
+    task2.cancel()
+    await _http_client.aclose()
+
+
 # ── FastAPI App ───────────────────────────────────────────────────
 app = FastAPI(
     title="Sentinel-Core Dashboard API",
     description="Dashboard backend — reads live eBPF events from Redis stream + remediation agent.",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -553,37 +585,6 @@ async def _periodic_cache_refresh():
     while True:
         _refresh_event_cache()
         await asyncio.sleep(10)
-
-
-# ============================================================================
-# LIFESPAN
-# ============================================================================
-
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    _refresh_event_cache()
-    logger.info("📊 Loaded %d events from Redis into cache", len(_event_cache))
-
-    task1 = asyncio.create_task(_redis_stream_listener())
-    task2 = asyncio.create_task(_periodic_cache_refresh())
-
-    logger.info("=" * 60)
-    logger.info("  SENTINEL-CORE DASHBOARD API — LIVE")
-    logger.info("  Port: %d", DASHBOARD_API_PORT)
-    logger.info("  Redis: %s:%d (%s)", REDIS_HOST, REDIS_PORT, "connected" if _redis else "disconnected")
-    logger.info("  Forwarder: %s", FORWARDER_API_URL)
-    logger.info("  Remediation: %s", "active" if _remediation_agent else "unavailable")
-    logger.info("=" * 60)
-
-    yield
-
-    task1.cancel()
-    task2.cancel()
-    await _http_client.aclose()
-
-app.router.lifespan_context = lifespan
 
 
 # ============================================================================

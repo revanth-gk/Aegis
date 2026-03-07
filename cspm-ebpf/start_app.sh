@@ -96,7 +96,7 @@ echo ""
 echo "[4/6] Deploying attacker workload into cluster..."
 kubectl delete pod attacker-pod --ignore-not-found=true >/dev/null 2>&1
 kubectl run attacker-pod \
-    --image=alpine/curl:latest \
+    --image=alpine:latest \
     --restart=Never \
     -- sleep 3600
 echo "  ↳ Waiting for attacker pod..."
@@ -224,6 +224,13 @@ except KeyboardInterrupt:
     pub.close()
     sys.exit(0)
 PYEOF
+
+# Kill any previously running dashboard API
+pkill -f "python3 dashboard_api.py" || true
+# Start dashboard API on port 8080
+python3 dashboard_api.py > dashboard_api.log 2>&1 &
+DASHBOARD_PID=$!
+echo "📊 Dashboard API: http://127.0.0.1:8080"
 
 echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"

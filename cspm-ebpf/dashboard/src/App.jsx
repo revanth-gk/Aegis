@@ -62,6 +62,7 @@ function App() {
 
     ws.onclose = () => {
       setWsConnected(false)
+      console.log('[WS] Disconnected. Reconnecting in 3s...')
       reconnectTimeout.current = setTimeout(connectWs, 3000)
     }
 
@@ -85,25 +86,25 @@ function App() {
     switch (currentPage) {
       case 'command':
         return (
-          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-hidden">
+          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
             <CommandCenter />
           </motion.div>
         )
       case 'ledger':
         return (
-          <motion.div key="ledger" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-hidden">
+          <motion.div key="ledger" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
             <IncidentLedger />
           </motion.div>
         )
       case 'forensics':
         return (
-          <motion.div key="forensics" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-hidden">
+          <motion.div key="forensics" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
             <ForensicsPanel />
           </motion.div>
         )
       default:
         return (
-          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-hidden">
+          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
             <CommandCenter />
           </motion.div>
         )

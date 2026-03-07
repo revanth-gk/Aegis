@@ -40,11 +40,10 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ============================================================================
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST")
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 MITRE_TOP_K = 3
 AZURE_TOP_K = 2
@@ -61,14 +60,17 @@ _pc_index = None
 _llm = None
 _embeddings_model = None
 
-# --- HuggingFace Embeddings ---
+# --- Google GenAI Embeddings ---
 if not OFFLINE_MODE:
     try:
-        from langchain_huggingface import HuggingFaceEmbeddings
-        _embeddings_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-        logger.info(f"HuggingFace embeddings initialized ({EMBEDDING_MODEL_NAME})")
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        _embeddings_model = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=GOOGLE_API_KEY
+        )
+        logger.info("Google embeddings initialized (models/text-embedding-004)")
     except Exception as e:
-        logger.exception("Failed to initialize HuggingFace embeddings")
+        logger.exception("Failed to initialize Google embeddings")
 
 # --- Gemini Client (new google-genai SDK) ---
 if GOOGLE_API_KEY and not OFFLINE_MODE:
