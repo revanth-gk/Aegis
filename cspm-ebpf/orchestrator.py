@@ -117,6 +117,11 @@ class SentinelState(TypedDict):
     fix_type: str
     fix_description: str
     error: str
+    # Remediation fields (Node D)
+    remediation_status: str         # "succeeded", "failed", "skipped", "dry_run"
+    remediation_action: str         # "SIGKILL", "YAML", or empty
+    remediation_timestamp: str      # ISO 8601 timestamp
+    remediation_error: str          # Error message if remediation failed
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -611,18 +616,58 @@ def rag_or_end(state: SentinelState) -> str:
 def report_or_end(state: SentinelState) -> str:
     return END
 
+def remediation_or_end(state: SentinelState) -> str:
+    """
+    Route to remediation_agent for TP events, otherwise END.
+    
+    Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3
+    """
+    guide_grade = state.get("guide_grade", "")
+    
+    # Only route TP events to remediation
+    if guide_grade == "TP":
+        logger.debug(f"Routing TP event to remediation_agent")
+        return "remediation_agent"
+    
+    # BP, FP, or missing grade skip remediation
+    logger.debug(f"Skipping remediation for grade={guide_grade}")
+    return END
+
 def build_sentinel_graph() -> StateGraph:
     logger.info("Building Sentinel-Core LangGraph workflow...")
     workflow = StateGraph(SentinelState)
     workflow.add_node("event_router", event_router)
     workflow.add_node("rag_retriever", rag_retriever)
     workflow.add_node("report_generator", report_generator)
+    
+    # Import remediation_agent dynamically to avoid circular imports
+    # The actual node will be added when remediation module is complete
+    try:
+        from remediation.agent import remediation_agent
+        workflow.add_node("remediation_agent", remediation_agent)
+        logger.info("Remediation agent node registered")
+    except ImportError:
+        logger.warning("Remediation agent not available - skipping node registration")
+        # Define a placeholder that just passes through
+        def remediation_placeholder(state: SentinelState) -> dict:
+            logger.info("Remediation agent placeholder - no action taken")
+            return {
+                **state,
+                "remediation_status": "skipped",
+                "remediation_action": "",
+                "remediation_timestamp": "",
+                "remediation_error": "Remediation module not installed"
+            }
+        workflow.add_node("remediation_agent", remediation_placeholder)
 
     workflow.set_entry_point("event_router")
 
     workflow.add_conditional_edges("event_router", continue_or_end)
     workflow.add_conditional_edges("rag_retriever", rag_or_end)
-    workflow.add_conditional_edges("report_generator", report_or_end)
+    # Updated: report_generator now routes to remediation for TP events
+    workflow.add_conditional_edges("report_generator", remediation_or_end)
+    # remediation_agent always routes to END
+    workflow.add_edge("remediation_agent", END)
 
     logger.info("LangGraph workflow built successfully")
     return workflow.compile()
@@ -663,7 +708,12 @@ def analyze_alert(raw_event: dict, guide_score: float, guide_grade: str, stream:
         "attack_type": "",
         "fix_type": "",
         "fix_description": "",
-        "error": ""
+        "error": "",
+        # Initialize remediation fields
+        "remediation_status": "",
+        "remediation_action": "",
+        "remediation_timestamp": "",
+        "remediation_error": ""
     }
 
     initial_state["stream"] = stream

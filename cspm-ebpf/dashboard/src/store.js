@@ -144,15 +144,22 @@ export const useStore = create((set, get) => ({
   // ── Neutralize ──
   neutralizeEvent: async (eventId) => {
     try {
-      const res = await fetch(`${API_BASE}/api/neutralize/${eventId}`, { method: 'POST' })
-      const data = await res.json()
-      set({ immunityScore: data.immunity_score })
+      const res = await fetch(`${API_BASE}/api/remediation/execute/${eventId}`, { method: 'POST' })
+      let data;
+      try {
+        data = await res.json()
+      } catch (e) {
+        data = { error: res.statusText }
+      }
+      if (res.ok && data.immunity_score !== undefined) {
+        set({ immunityScore: data.immunity_score })
+      }
       // Refresh immunity score
       get().fetchImmunityScore()
       return data
     } catch (err) {
-      console.error('Failed to neutralize:', err)
-      return null
+      console.error('Failed to neutralize via remediation agent:', err)
+      return { error: err.message }
     }
   },
 

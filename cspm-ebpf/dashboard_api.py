@@ -8,6 +8,7 @@ Serves the React dashboard frontend by:
   3. Computing triage stats, timeline, immunity score from real events
   4. Streaming events via WebSocket using XREAD BLOCK on Redis
   5. Enriching forensic detail using forwarder's MITRE resolution logic
+  6. Integrating remediation agent for SIGKILL / YAML patch actions
 
 Runs on port 8080 — the Vite dev server proxies /api/* here.
 """
@@ -19,7 +20,7 @@ import time
 import asyncio
 import logging
 import datetime
-import glob
+import subprocess
 from pathlib import Path
 from collections import defaultdict
 from typing import Any, Optional
@@ -72,12 +73,28 @@ except Exception as e:
     logger.warning("⚠️  Redis not available (%s). Dashboard will show empty data until pipeline starts.", e)
     _redis = None
 
+# ── Remediation Agent ─────────────────────────────────────────────
+_remediation_agent = None
+_remediation_config = None
+
+try:
+    from remediation.config import RemediationConfig
+    from remediation.agent import RemediationAgent
+    from remediation.audit_logger import AuditLogger
+
+    _remediation_config = RemediationConfig.from_env()
+    _remediation_agent = RemediationAgent(_remediation_config)
+    logger.info("✅ Remediation agent loaded (mode=%s, dry_run=%s)",
+                _remediation_config.autonomy_mode, _remediation_config.dry_run)
+except Exception as e:
+    logger.warning("⚠️  Remediation agent not available (%s). Remediation endpoints will return errors.", e)
+
 # ── In-Memory State ───────────────────────────────────────────────
-# Caches events read from Redis for fast endpoint responses
 _event_cache: list[dict] = []
-_enforcement_mode = "shadow"  # 'shadow' or 'guardian'
+_enforcement_mode = "shadow"
 _neutralized_events: set[str] = set()
-_last_redis_id = "0-0"  # Track where we are in the Redis stream
+_last_redis_id = "0-0"
+_remediation_log: list[dict] = []  # Track remediation actions for UI
 
 # ── HTTP Client (for proxying forwarder API) ──────────────────────
 _http_client = httpx.AsyncClient(timeout=5.0)
@@ -85,8 +102,8 @@ _http_client = httpx.AsyncClient(timeout=5.0)
 # ── FastAPI App ───────────────────────────────────────────────────
 app = FastAPI(
     title="Sentinel-Core Dashboard API",
-    description="Dashboard backend — reads live eBPF events from Redis stream.",
-    version="1.0.0",
+    description="Dashboard backend — reads live eBPF events from Redis stream + remediation agent.",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -109,7 +126,6 @@ def _read_events_from_redis(count: int = 300) -> list[dict]:
     if not _redis:
         return []
     try:
-        # XREVRANGE returns newest first
         raw = _redis.xrevrange(REDIS_STREAM_KEY, count=count)
         events = []
         for msg_id, fields in raw:
@@ -135,10 +151,8 @@ def _enrich_event_for_dashboard(event: dict) -> dict:
     grade = triage.get("grade", "TP") if isinstance(triage, dict) else "TP"
     confidence = triage.get("confidence", 0.0) if isinstance(triage, dict) else 0.0
 
-    # Resolve MITRE technique
     mitre = _resolve_mitre(event)
 
-    # Determine severity from grade + binary risk
     binary = telemetry.get("binary", "")
     binary_basename = binary.rsplit("/", 1)[-1] if binary else ""
 
@@ -151,7 +165,6 @@ def _enrich_event_for_dashboard(event: dict) -> dict:
     else:
         severity = "low"
 
-    # Build human description
     action_verb = {
         "process_exec": "executed",
         "process_kprobe": "triggered syscall in",
@@ -162,14 +175,12 @@ def _enrich_event_for_dashboard(event: dict) -> dict:
     ns = telemetry.get("namespace", "default")
     description = f"{binary_basename or 'unknown'} {action_verb} pod {pod}/{ns}"
 
-    # Processing time (realistic from pipeline)
     processing_time = {
         "ebpf_intercept_ms": 0.2,
         "guide_triage_ms": round(confidence * 60 + 10, 1) if confidence else 45,
         "ai_reasoning_ms": 1200,
     }
 
-    # Add enrichment to event
     enriched = {
         **event,
         "severity": severity,
@@ -177,7 +188,6 @@ def _enrich_event_for_dashboard(event: dict) -> dict:
         "processing_time": processing_time,
     }
 
-    # Ensure explanation has mitre_id
     if isinstance(explanation, dict):
         enriched["explanation"] = {
             **explanation,
@@ -209,7 +219,6 @@ def _compute_triage_stats(events: list[dict]) -> dict:
         triage = e.get("triage", {})
         if isinstance(triage, dict) and triage.get("grade"):
             grade = triage["grade"]
-            # Map grade to frontend keys
             label_map = {"TP": "TruePositive", "BP": "BenignPositive", "FP": "FalsePositive"}
             label = label_map.get(grade, "TruePositive")
             breakdown[label] += 1
@@ -254,12 +263,12 @@ def _compute_timeline(events: list[dict], minutes: int = 30) -> list[dict]:
     return buckets
 
 
-def _parse_ts(ts_str: str | None) -> datetime.datetime | None:
+def _parse_ts(ts_str) -> datetime.datetime | None:
     """Parse an ISO timestamp string."""
     if not ts_str:
         return None
     try:
-        return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return datetime.datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
 
@@ -272,7 +281,6 @@ def _compute_immunity_score(events: list[dict]) -> dict:
     neutralized = sum(1 for e in events if e.get("event_id") in _neutralized_events)
 
     total = len(events) or 1
-    # Score penalizes un-neutralized TPs
     un_neutralized_tp = max(tp_count - neutralized, 0)
     score = max(0, 100 - int((un_neutralized_tp / total) * 100))
 
@@ -308,7 +316,6 @@ def _load_policies() -> list[dict]:
         except Exception as e:
             logger.warning("Failed to load policy %s: %s", yaml_file, e)
 
-    # Also include root sentinel-policy.yaml
     root_policy = Path(os.path.dirname(__file__)) / "sentinel-policy.yaml"
     if root_policy.exists():
         try:
@@ -375,11 +382,9 @@ def _build_forensics(event: dict) -> dict:
     ns = telemetry.get("namespace", "default")
     binary = telemetry.get("binary", "unknown")
 
-    # Build reasoning text
     reasoning = unified.get("reasoning", {})
     reasoning_text = reasoning.get("guide_explanation", "")
 
-    # SHAP-like feature importance (from actual ML pipeline features)
     shap_values = []
     uid = telemetry.get("uid", 1000)
     binary_basename = binary.rsplit("/", 1)[-1] if binary else ""
@@ -411,7 +416,6 @@ def _build_forensics(event: dict) -> dict:
     if any(p in args_str for p in ["/etc/shadow", "/etc/passwd", "/root", ".ssh"]):
         shap_values.append({"factor": "sensitive_path_access", "score": 0.45})
 
-    # MITRE tactic grid
     all_tactics = [
         {"id": "TA0001", "name": "Initial Access", "short": "Init Access"},
         {"id": "TA0002", "name": "Execution", "short": "Execution"},
@@ -427,7 +431,6 @@ def _build_forensics(event: dict) -> dict:
         {"id": "TA0040", "name": "Impact", "short": "Impact"},
     ]
 
-    # Map the detected tactic to a tactic ID
     tactic_map = {
         "Execution": "TA0002",
         "Persistence": "TA0003",
@@ -442,7 +445,6 @@ def _build_forensics(event: dict) -> dict:
     }
     detected_tactic_id = tactic_map.get(mitre.get("tactic", ""), "TA0002")
 
-    # Build remediation YAML
     yaml_fix = _generate_yaml_fix(grade, event, mitre)
     insecure_yaml = f"""apiVersion: v1
 kind: Pod
@@ -512,7 +514,6 @@ async def _redis_stream_listener():
 
     while True:
         try:
-            # XREAD with 2s block — returns new messages after _last_redis_id
             result = _redis.xread({REDIS_STREAM_KEY: _last_redis_id}, block=2000, count=10)
             if result:
                 for stream_name, messages in result:
@@ -524,12 +525,10 @@ async def _redis_stream_listener():
                                 event = json.loads(event_json)
                                 enriched = _enrich_event_for_dashboard(event)
 
-                                # Add to cache
                                 _event_cache.insert(0, enriched)
                                 if len(_event_cache) > 300:
                                     _event_cache[:] = _event_cache[:300]
 
-                                # Push to all WebSocket clients
                                 payload = json.dumps(enriched, default=str)
                                 disconnected = []
                                 for ws in _ws_clients:
@@ -564,7 +563,6 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initial cache load + background tasks
     _refresh_event_cache()
     logger.info("📊 Loaded %d events from Redis into cache", len(_event_cache))
 
@@ -576,6 +574,7 @@ async def lifespan(app: FastAPI):
     logger.info("  Port: %d", DASHBOARD_API_PORT)
     logger.info("  Redis: %s:%d (%s)", REDIS_HOST, REDIS_PORT, "connected" if _redis else "disconnected")
     logger.info("  Forwarder: %s", FORWARDER_API_URL)
+    logger.info("  Remediation: %s", "active" if _remediation_agent else "unavailable")
     logger.info("=" * 60)
 
     yield
@@ -588,12 +587,12 @@ app.router.lifespan_context = lifespan
 
 
 # ============================================================================
-# ENDPOINTS
+# CORE ENDPOINTS
 # ============================================================================
 
 @app.get("/api/health")
 async def api_health():
-    """Health check — combines dashboard API + forwarder + Redis status."""
+    """Health check — combines dashboard API + forwarder + Redis + remediation."""
     forwarder_ok = False
     forwarder_data = {}
     try:
@@ -604,6 +603,17 @@ async def api_health():
     except Exception:
         pass
 
+    # Check kubectl availability for remediation
+    kubectl_ok = False
+    try:
+        result = subprocess.run(
+            ["kubectl", "version", "--client"],
+            capture_output=True, text=True, timeout=3
+        )
+        kubectl_ok = result.returncode == 0
+    except Exception:
+        pass
+
     return {
         "status": "ok" if (_redis and forwarder_ok) else "degraded",
         "components": {
@@ -611,8 +621,13 @@ async def api_health():
             "redis": {"status": "connected" if _redis else "disconnected"},
             "forwarder": {
                 "status": "ok" if forwarder_ok else "unreachable",
-                "mode": forwarder_data.get("mode", "live" if forwarder_ok else "unknown"),
                 **forwarder_data,
+            },
+            "remediation_agent": {
+                "status": "active" if _remediation_agent else "unavailable",
+                "autonomy_mode": _remediation_config.autonomy_mode if _remediation_config else None,
+                "dry_run": _remediation_config.dry_run if _remediation_config else None,
+                "kubectl": "available" if kubectl_ok else "not found",
             },
         },
         "events_cached": len(_event_cache),
@@ -623,12 +638,10 @@ async def api_health():
 @app.get("/api/metrics")
 async def api_metrics():
     """Proxy metrics from the forwarder API, supplemented with dashboard data."""
-    # Try to proxy from forwarder
     try:
         resp = await _http_client.get(f"{FORWARDER_API_URL}/metrics")
         if resp.status_code == 200:
             data = resp.json()
-            # Add severity breakdown from our enriched events
             severity_breakdown = defaultdict(int)
             for e in _event_cache:
                 sev = e.get("severity", "low")
@@ -639,7 +652,6 @@ async def api_metrics():
     except Exception:
         pass
 
-    # Fallback: compute from event cache
     events = _event_cache
     by_type = defaultdict(int)
     severity_breakdown = defaultdict(int)
@@ -711,7 +723,6 @@ async def api_toggle_enforcement():
 @app.get("/api/explain/{event_id}")
 async def api_explain(event_id: str):
     """Return forensic analysis for a specific event."""
-    # Find the event in cache
     event = next((e for e in _event_cache if e.get("event_id") == event_id), None)
     if not event:
         return JSONResponse(status_code=404, content={"error": "Event not found"})
@@ -741,7 +752,6 @@ async def ws_events(websocket: WebSocket):
 
     try:
         while True:
-            # Keep the connection alive; actual push happens in _redis_stream_listener
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
@@ -749,6 +759,186 @@ async def ws_events(websocket: WebSocket):
         if websocket in _ws_clients:
             _ws_clients.remove(websocket)
         logger.info("🔌 WebSocket client disconnected (%d remaining)", len(_ws_clients))
+
+
+# ============================================================================
+# REMEDIATION AGENT ENDPOINTS
+# ============================================================================
+
+@app.get("/api/remediation/config")
+async def get_remediation_config():
+    """Get current remediation agent configuration."""
+    if not _remediation_config:
+        return JSONResponse(status_code=503, content={
+            "error": "Remediation agent not available",
+            "hint": "Check that remediation module is installed and configured"
+        })
+    return _remediation_config.to_dict()
+
+
+@app.post("/api/remediation/config")
+async def update_remediation_config(body: dict = None):
+    """
+    Update remediation configuration at runtime.
+
+    Body fields (all optional):
+      - autonomy_mode: "autonomous" | "tiered" | "human-in-loop"
+      - dry_run: true | false
+      - sigkill_threshold: 0.0-1.0
+      - yaml_threshold: 0.0-1.0
+    """
+    if not _remediation_config:
+        return JSONResponse(status_code=503, content={"error": "Remediation agent not available"})
+
+    try:
+        _remediation_config.update(
+            autonomy_mode=body.get("autonomy_mode") if body else None,
+            dry_run=body.get("dry_run") if body else None,
+            sigkill_threshold=body.get("sigkill_threshold") if body else None,
+            yaml_threshold=body.get("yaml_threshold") if body else None,
+        )
+        logger.info("🔧 Remediation config updated: %s", _remediation_config.to_dict())
+        return {
+            "message": "Configuration updated successfully",
+            "config": _remediation_config.to_dict()
+        }
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
+@app.get("/api/remediation/health")
+async def remediation_health():
+    """Health check for remediation agent dependencies (kubectl, Redis)."""
+    kubectl_ok = False
+    kubectl_msg = "not checked"
+    try:
+        result = subprocess.run(
+            ["kubectl", "version", "--client"],
+            capture_output=True, text=True, timeout=5
+        )
+        kubectl_ok = result.returncode == 0
+        kubectl_msg = "available" if kubectl_ok else f"error: {result.stderr}"
+    except FileNotFoundError:
+        kubectl_msg = "kubectl not found"
+    except subprocess.TimeoutExpired:
+        kubectl_msg = "kubectl timeout"
+    except Exception as e:
+        kubectl_msg = str(e)
+
+    return {
+        "status": "healthy" if (_remediation_agent and kubectl_ok) else "degraded",
+        "agent_loaded": _remediation_agent is not None,
+        "dependencies": {
+            "kubernetes": {"healthy": kubectl_ok, "message": kubectl_msg},
+            "redis": {"healthy": _redis is not None, "message": "connected" if _redis else "disconnected"},
+        },
+        "config": _remediation_config.to_dict() if _remediation_config else None,
+    }
+
+
+@app.post("/api/remediation/execute/{event_id}")
+async def execute_remediation(event_id: str):
+    """
+    Execute remediation for a specific event.
+
+    The agent determines the action (SIGKILL or YAML patch) based on MITRE tactics
+    and confidence thresholds. In dry_run mode, actions are logged but not executed.
+
+    Returns the remediation result including action taken, status, and audit trail.
+    """
+    if not _remediation_agent:
+        return JSONResponse(status_code=503, content={
+            "error": "Remediation agent not available",
+            "hint": "Ensure remediation module is configured and kubectl is accessible"
+        })
+
+    # Find event in cache
+    event = next((e for e in _event_cache if e.get("event_id") == event_id), None)
+    if not event:
+        return JSONResponse(status_code=404, content={"error": "Event not found"})
+
+    telemetry = event.get("telemetry", {})
+    triage = event.get("triage", {}) or {}
+    mitre = _resolve_mitre(event)
+
+    # Build the SentinelState dict expected by the remediation agent
+    state = {
+        "event_id": event_id,
+        "raw_event": event,
+        "guide_score": triage.get("confidence", 0.0) if isinstance(triage, dict) else 0.0,
+        "guide_grade": triage.get("grade", "TP") if isinstance(triage, dict) else "TP",
+        "mitre_techniques": [{
+            "id": mitre["id"],
+            "name": mitre["name"],
+            "tactic": mitre["tactic"],
+        }] if mitre.get("id") != "N/A" else [],
+        "yaml_fix": _generate_yaml_fix(
+            triage.get("grade", "TP") if isinstance(triage, dict) else "TP",
+            event, mitre
+        ),
+    }
+
+    # Execute remediation
+    try:
+        result = _remediation_agent.process_event(state)
+
+        # Record in remediation log
+        log_entry = {
+            "event_id": event_id,
+            "timestamp": result.get("remediation_timestamp"),
+            "action": result.get("remediation_action", ""),
+            "status": result.get("remediation_status", ""),
+            "error": result.get("remediation_error", ""),
+            "config": _remediation_config.to_dict() if _remediation_config else {},
+            "pod": telemetry.get("pod", "unknown"),
+            "namespace": telemetry.get("namespace", "default"),
+        }
+        _remediation_log.insert(0, log_entry)
+        if len(_remediation_log) > 100:
+            _remediation_log[:] = _remediation_log[:100]
+
+        logger.info("🛡️ Remediation executed for event %s: action=%s, status=%s",
+                     event_id, result.get("remediation_action"), result.get("remediation_status"))
+
+        # Also mark as neutralized if succeeded
+        if result.get("remediation_status") == "succeeded":
+            _neutralized_events.add(event_id)
+
+        return {
+            "event_id": event_id,
+            "action": result.get("remediation_action", ""),
+            "status": result.get("remediation_status", ""),
+            "timestamp": result.get("remediation_timestamp", ""),
+            "error": result.get("remediation_error", ""),
+            "dry_run": _remediation_config.dry_run if _remediation_config else True,
+            "autonomy_mode": _remediation_config.autonomy_mode if _remediation_config else "unknown",
+            "immunity_score": _compute_immunity_score(_event_cache)["score"],
+        }
+
+    except Exception as e:
+        logger.exception("Remediation execution failed for event %s", event_id)
+        return JSONResponse(status_code=500, content={
+            "error": f"Remediation execution failed: {str(e)}"
+        })
+
+
+@app.get("/api/remediation/log")
+async def get_remediation_log():
+    """Return the remediation audit log (recent actions)."""
+    return {"log": _remediation_log}
+
+
+@app.get("/api/remediation/audit/{event_id}")
+async def get_audit_trail(event_id: str):
+    """Query the full audit trail for a specific event from Redis."""
+    if not _remediation_agent:
+        return JSONResponse(status_code=503, content={"error": "Remediation agent not available"})
+
+    try:
+        records = _remediation_agent.audit_logger.query_by_event_id(event_id)
+        return {"event_id": event_id, "audit_records": records}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # ============================================================================
