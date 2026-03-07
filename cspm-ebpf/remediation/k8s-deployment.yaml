@@ -1,0 +1,252 @@
+# Kubernetes Deployment for Sentinel-Core with RemediationAgent
+# This manifest deploys the complete Sentinel-Core system with remediation enabled
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-core-config
+  namespace: sentinel-core
+  labels:
+    app: sentinel-core
+data:
+  # RemediationAgent configuration
+  REMEDIATION_AUTONOMY_MODE: "tiered"
+  REMEDIATION_DRY_RUN: "false"  # Set to "true" for testing
+  REMEDIATION_SIGKILL_THRESHOLD: "0.92"
+  REMEDIATION_YAML_THRESHOLD: "0.95"
+  
+  # Redis configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sentinel-core-secrets
+  namespace: sentinel-core
+  labels:
+    app: sentinel-core
+type: Opaque
+stringData:
+  # Add your secrets here
+  GOOGLE_API_KEY: "your-google-api-key"
+  PINECONE_API_KEY: "your-pinecone-api-key"
+  REDIS_PASSWORD: ""  # Leave empty if Redis doesn't require auth
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel-core
+  namespace: sentinel-core
+  labels:
+    app: sentinel-core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentinel-core
+  template:
+    metadata:
+      labels:
+        app: sentinel-core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: remediation-agent
+      
+      containers:
+      - name: sentinel-core
+        image: sentinel-core:latest
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        
+        env:
+        # Load configuration from ConfigMap
+        - name: REMEDIATION_AUTONOMY_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REMEDIATION_AUTONOMY_MODE
+        
+        - name: REMEDIATION_DRY_RUN
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REMEDIATION_DRY_RUN
+        
+        - name: REMEDIATION_SIGKILL_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REMEDIATION_SIGKILL_THRESHOLD
+        
+        - name: REMEDIATION_YAML_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REMEDIATION_YAML_THRESHOLD
+        
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REDIS_HOST
+        
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REDIS_PORT
+        
+        - name: REDIS_DB
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: REDIS_DB
+        
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sentinel-core-config
+              key: LOG_LEVEL
+        
+        # Load secrets
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentinel-core-secrets
+              key: GOOGLE_API_KEY
+        
+        - name: PINECONE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sentinel-core-secrets
+              key: PINECONE_API_KEY
+        
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sentinel-core-secrets
+              key: REDIS_PASSWORD
+              optional: true
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /api/remediation/health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /api/remediation/health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # kubectl needs write access
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-core
+  namespace: sentinel-core
+  labels:
+    app: sentinel-core
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: sentinel-core
+
+---
+# Redis deployment (if not using external Redis)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: sentinel-core
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: sentinel-core
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: redis
