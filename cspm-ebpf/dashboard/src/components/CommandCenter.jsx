@@ -11,6 +11,7 @@
  * 7. CHARTS: Include axis labels and units.
  */
 
+import { useState } from 'react'
 import { useStore } from '../store'
 import { motion } from 'framer-motion'
 import { Shield, Server, Activity, AlertTriangle, CheckCircle, TrendingUp, BarChart2, Brain, CheckCircle2, Database, Compass, HardHat, Cog, Hexagon, Box, Zap } from 'lucide-react'
