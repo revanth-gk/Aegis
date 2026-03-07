@@ -243,6 +243,11 @@ PYTHONPATH="$PWD" python3 -m uvicorn attacker-dashboard.app:app --host 0.0.0.0 -
 ATTACKER_PID=$!
 echo "⚔️ Attacker Control: http://127.0.0.1:8003"
 
+cd dashboard && npm run dev > /tmp/dashboard_ui.log 2>&1 &
+DASHBOARD_UI_PID=$!
+cd ..
+echo "🖥️  Main Dashboard UI: http://localhost:3000"
+
 echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"
 echo "============================================================"
