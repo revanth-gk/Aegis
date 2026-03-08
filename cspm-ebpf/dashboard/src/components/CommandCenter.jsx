@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 
 export default function CommandCenter() {
   const {
@@ -39,9 +39,9 @@ export default function CommandCenter() {
   const filterRatio = Math.round(((fpCount + bpCount) / totalTriaged) * 100)
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0a0e1a]">
+    <div className="flex flex-col h-full bg-[#0a0e1a] overflow-hidden">
       {/* ── TOP STATUS STRIP ────────────────────────────────────────── */}
-      <div className="px-6 py-5 border-b border-border flex items-stretch gap-4 overflow-x-auto bg-muted/10 shadow-sm z-10 relative">
+      <div className="flex-none px-6 py-5 border-b border-border flex flex-wrap lg:flex-nowrap items-stretch gap-4 overflow-x-auto bg-muted/10 shadow-sm z-10 relative shrink-0">
         
         {/* Security Score */}
         <div className="glass-card flex-1 min-w-[220px] p-5 flex flex-col justify-between">
@@ -89,24 +89,24 @@ export default function CommandCenter() {
 
       {/* ── MAIN BODY ─────────────────────────────────────────────────
           Cluster map is dominant (8 col). Right panel stacks secondary data. */}
-      <div className="flex h-[calc(100%-57px)]">
+      <div className="flex-1 flex min-h-0">
 
         {/* LEFT: Cluster Map */}
         <div className="flex-1 border-r border-border flex flex-col overflow-hidden bg-background">
-          <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted/5">
+          <div className="flex-none px-6 py-4 border-b border-border flex items-center justify-between bg-muted/5">
             <div className="flex items-center gap-3">
               <div className="p-1.5 bg-primary/10 rounded-md border border-primary/20">
                 <Server className="w-4 h-4 text-primary" />
               </div>
               <span className="text-sm font-semibold text-foreground tracking-tight">Cluster Node Map</span>
-              <span className="text-xs text-muted-foreground ml-2 px-2 py-0.5 bg-muted rounded-full">— kind-control-plane · 3 nodes · {cluster?.total_pods || 0} pods</span>
+              <span className="text-xs text-muted-foreground ml-2 px-2 py-0.5 bg-muted rounded-full">— kind-control-plane · {cluster?.nodes?.length || 3} nodes · {cluster?.total_pods || 0} pods</span>
             </div>
             <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium px-2 py-1 bg-emerald-500/10 rounded-md border border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
               Live Monitor
             </div>
           </div>
-          <div className="flex-1 overflow-hidden p-6">
+          <div className="flex-1 overflow-hidden p-6 flex flex-col">
             <LiveNodeGraph cluster={cluster} events={events} />
           </div>
         </div>
@@ -204,18 +204,25 @@ function LiveNodeGraph({ cluster, events }) {
     const activity = {}
     for (const e of (events || []).slice(0, 50)) {
       const node = e.node_name
-      if (node) activity[node] = (activity[node] || 0) + 1
+      if (node) {
+        if (!activity[node]) activity[node] = { total: 0, tp: 0 }
+        activity[node].total += 1
+        if (e.triage?.grade === 'TP') activity[node].tp += 1
+      }
     }
     return activity
   }, [events])
 
-  // Helpers to check activity by node matching
-  const isActive = (nMatch) => {
-    return Object.entries(nodeActivity).some(([name, count]) => name.includes(nMatch) && count > 0)
-  }
-  const getCount = (nMatch) => {
-    return Object.entries(nodeActivity).filter(([n]) => n.includes(nMatch)).reduce((acc, [_, c]) => acc + c, 0)
-  }
+  const getStats = useCallback((nMatch) => {
+    return Object.entries(nodeActivity).reduce((acc, [name, stats]) => {
+        const matches = nMatch === 'worker' ? name.endsWith('-worker') : name.includes(nMatch)
+        if (matches) {
+            acc.total += stats.total;
+            acc.tp += stats.tp;
+        }
+        return acc;
+    }, { total: 0, tp: 0 })
+  }, [nodeActivity])
 
   const [selectedNodeId, setSelectedNodeId] = useState(null)
 
@@ -223,30 +230,47 @@ function LiveNodeGraph({ cluster, events }) {
   const mapNodes = [
     { id: 'cluster', label: 'Kind Kubernetes Cluster', icon: Database, x: 340, y: 70, w: 240, h: 70, type: 'cluster' },
     
-    { id: 'cp', label: 'control-plane', icon: Compass, x: 140, y: 220, w: 180, h: 65, type: 'node', match: '12-14' },
-    { id: 'w1', label: 'worker-1', icon: HardHat, x: 340, y: 220, w: 180, h: 65, type: 'node', match: '45-78' },
-    { id: 'w2', label: 'worker-2', icon: Cog, x: 540, y: 220, w: 180, h: 65, type: 'node', match: '82-99' },
+    { id: 'cp', label: 'control-plane', icon: Compass, x: 140, y: 220, w: 180, h: 65, type: 'node', match: 'control-plane' },
+    { id: 'w1', label: 'worker-1', icon: HardHat, x: 340, y: 220, w: 180, h: 65, type: 'node', match: 'worker' },
+    { id: 'w2', label: 'worker-2', icon: Cog, x: 540, y: 220, w: 180, h: 65, type: 'node', match: 'worker2' },
 
-    { id: 'tet-cp', label: 'Tetragon DaemonSet', icon: Hexagon, x: 140, y: 350, w: 180, h: 60, type: 'agent', match: '12-14' },
-    { id: 'tet-w1', label: 'Tetragon Pod', icon: Shield, x: 340, y: 350, w: 180, h: 60, type: 'agent', match: '45-78' },
-    { id: 'tet-w2', label: 'Tetragon Pod', icon: Shield, x: 540, y: 350, w: 180, h: 60, type: 'agent', match: '82-99' },
+    { id: 'tet-cp', label: 'Tetragon DaemonSet', icon: Hexagon, x: 140, y: 350, w: 180, h: 60, type: 'agent', match: 'control-plane' },
+    { id: 'tet-w1', label: 'Tetragon Pod', icon: Shield, x: 340, y: 350, w: 180, h: 60, type: 'agent', match: 'worker' },
+    { id: 'tet-w2', label: 'Tetragon Pod', icon: Shield, x: 540, y: 350, w: 180, h: 60, type: 'agent', match: 'worker2' },
   ]
 
   // Render a sleek map node
   const renderNode = (n) => {
-    const active = n.match ? isActive(n.match) : false
-    const count = n.match ? getCount(n.match) : 0
+    const stats = n.match ? getStats(n.match) : { total: 0, tp: 0 }
+    const active = stats.total > 0
+    const hasCritical = stats.tp > 0
+    
     const bx = n.x - n.w / 2
     const by = n.y - n.h / 2
     const Icon = n.icon
     const isSelected = selectedNodeId === n.id
-    const borderColor = isSelected ? 'rgba(56,189,248,1)' : active ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.15)'
-    const bgColor = n.type === 'cluster' ? 'rgba(30,41,59,0.9)' : isSelected ? 'rgba(30,41,59,0.95)' : 'rgba(17,24,39,0.85)'
+    
+    const borderColor = isSelected 
+        ? 'rgba(56,189,248,1)' 
+        : hasCritical 
+            ? 'rgba(239,68,68,0.8)' 
+            : active 
+                ? 'rgba(34,211,238,0.4)' 
+                : 'rgba(255,255,255,0.15)'
+                
+    const bgColor = n.type === 'cluster' 
+        ? 'rgba(30,41,59,0.9)' 
+        : hasCritical
+            ? 'rgba(69,10,10,0.85)' // deep red
+            : isSelected 
+                ? 'rgba(30,41,59,0.95)' 
+                : 'rgba(17,24,39,0.85)'
     
     return (
       <g key={n.id} className="cursor-pointer transition-transform hover:-translate-y-0.5" onClick={() => setSelectedNodeId(n.id === selectedNodeId ? null : n.id)}>
         {active && !isSelected && (
-          <rect x={bx - 2} y={by - 2} width={n.w + 4} height={n.h + 4} rx="10" fill="none" stroke="rgba(34,211,238,0.15)" strokeWidth="3">
+          <rect x={bx - 2} y={by - 2} width={n.w + 4} height={n.h + 4} rx="10" fill="none" 
+            stroke={hasCritical ? "rgba(239,68,68,0.4)" : "rgba(34,211,238,0.15)"} strokeWidth="3">
             <animate attributeName="opacity" values="0.8;0.3;0.8" dur="2s" repeatCount="indefinite" />
           </rect>
         )}
@@ -257,15 +281,19 @@ function LiveNodeGraph({ cluster, events }) {
         <rect x={bx} y={by} width={n.w} height={32} rx="8" fill="rgba(255,255,255,0.04)" />
         <rect x={bx} y={by + 24} width={n.w} height={8} fill="rgba(255,255,255,0.04)" />
         
-        {Icon && <Icon className="w-4 h-4 text-emerald-500/90" x={bx + 12} y={by + 9} />}
+        {Icon && <Icon className={`w-4 h-4 ${hasCritical ? 'text-red-400' : 'text-emerald-500/90'}`} x={bx + 12} y={by + 9} />}
         
         <text x={bx + 34} y={by + 20} fill={isSelected ? "#bae6fd" : "#f8fafc"} fontSize={n.type === 'cluster' ? '12.5' : '11.5'} fontWeight="600" fontFamily="'JetBrains Mono', monospace">
           {n.label}
         </text>
 
-        {active ? (
+        {hasCritical ? (
+          <text x={n.x} y={by + 48} fill="#ef4444" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter, sans-serif">
+            {stats.tp} critical alerts
+          </text>
+        ) : active ? (
           <text x={n.x} y={by + 48} fill="#38bdf8" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter, sans-serif">
-            {count} recent events
+            {stats.total} recent events
           </text>
         ) : (
            <text x={n.x} y={by + 48} fill="#64748b" fontSize="10" fontWeight="500" textAnchor="middle" fontFamily="Inter, sans-serif">
@@ -306,7 +334,7 @@ function LiveNodeGraph({ cluster, events }) {
   return (
     <div className="w-full h-full flex relative">
       <div className={`flex-1 flex flex-col justify-center items-center transition-all ${selectedNodeId ? 'w-2/3 pr-64' : 'w-full'}`}>
-        <svg className="w-full max-h-[580px]" viewBox="20 50 640 480" preserveAspectRatio="xMidYMid meet">
+        <svg className="w-full h-full max-h-[580px]" viewBox="20 20 640 500" preserveAspectRatio="xMidYMid meet">
           {renderLines()}
           {mapNodes.map(renderNode)}
 

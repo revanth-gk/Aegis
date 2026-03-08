@@ -11,7 +11,7 @@ metadata:
 spec:
   containers:
     - name: attacker
-      image: alpine:3.19
+      image: alpine/curl:latest
       command: ["sleep", "3600"]  # Keep alive for interactive exec
       securityContext:
         runAsUser: 33           # www-data UID (simulate compromised web app)

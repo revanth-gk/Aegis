@@ -117,10 +117,7 @@ echo "  ✓ Tetragon is LIVE and monitoring"
 echo ""
 echo "[4/9] Deploying attacker workload into cluster..."
 kubectl delete pod attacker-pod --ignore-not-found=true >/dev/null 2>&1
-kubectl run attacker-pod \
-    --image=alpine/curl:latest \
-    --restart=Never \
-    -- sleep 3600
+kubectl apply -f demo/attacker-pod.yaml
 echo "  ↳ Waiting for attacker pod..."
 kubectl wait --for=condition=ready pod attacker-pod --timeout=60s
 echo "  ✓ Attacker pod is LIVE in namespace: default"
@@ -317,6 +314,18 @@ DASHBOARD_API_PID=$!
 echo "  ✓ Dashboard API PID: $DASHBOARD_API_PID"
 sleep 2
 
+# ── 8a. Start Attacker Dashboard API (port 8003) ─────────────────
+echo ""
+echo "[8a/9] Starting Attacker Dashboard API on port 8003..."
+if [ -f "attacker-dashboard/app.py" ]; then
+    .venv/bin/python attacker-dashboard/app.py &
+    ATTACKER_API_PID=$!
+    echo "  ✓ Attacker API PID: $ATTACKER_API_PID"
+    sleep 2
+else
+    echo "  ⚠ Attacker Dashboard NOT FOUND."
+fi
+
 # ── 9. Start Frontend Dashboard (port 5173) ──────────────────────
 echo ""
 echo "[9/9] Starting Frontend Dashboard on port 5173..."
@@ -339,6 +348,7 @@ echo "============================================================"
 echo "  SENTINEL-CORE FULL STACK RUNNING"
 echo "============================================================"
 echo "  Frontend Dashboard:  http://localhost:5173"
+echo "  Attacker Dashboard:  http://localhost:8003"
 echo "  Dashboard API:       http://localhost:8080"
 echo "  Forwarder API:       http://localhost:8081"
 echo "  Redis:               localhost:6379"
@@ -352,7 +362,7 @@ echo ""
 cleanup() {
     echo ""
     echo "Shutting down Sentinel-Core services..."
-    kill $DASHBOARD_API_PID $FRONTEND_PID 2>/dev/null
+    kill $DASHBOARD_API_PID $FRONTEND_PID $ATTACKER_API_PID 2>/dev/null
     docker stop sentinel-redis >/dev/null 2>&1 || true
     exit 0
 }
