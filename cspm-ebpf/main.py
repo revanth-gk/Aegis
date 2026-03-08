@@ -34,7 +34,7 @@ load_dotenv()
 
 # Import orchestrator logic
 try:
-    from orchestrator import analyze_alert, ORCHESTRATOR_AVAILABLE, _pc_index, _genai_client
+    from orchestrator import analyze_alert, ORCHESTRATOR_AVAILABLE, _pc_index, _genai_client, GOOGLE_API_KEYS
 except ImportError as e:
     ORCHESTRATOR_AVAILABLE = False
     _pc_index = None
@@ -297,21 +297,35 @@ async def lifespan(app: FastAPI):
             logger.error(f"✗ Pinecone unreachable: {e}")
 
     # Check real Gemini connectivity
-    llm_available = _genai_client is not None
-    if llm_available:
-        try:
-            model_name = os.getenv("LLM_MODEL", "gemini-2.5-pro")
-            if not model_name.startswith("models/"):
-                model_name = f"models/{model_name}"
-            _genai_client.models.get(model=model_name)
-            logger.info("✓ Gemini LLM is reachable")
-        except Exception as e:
-            llm_available = False
-            logger.error(f"✗ Gemini unreachable: {e}")
+    llm_available = False
+    active_keys = 0
+    if GOOGLE_API_KEYS:
+        from google import genai
+        primary_model = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+        fallback_model = os.getenv("LLM_MODEL_FALLBACK", "gemini-1.5-flash")
+        
+        def fmt_model(m): return f"models/{m}" if not m.startswith("models/") else m
+        
+        for i, key in enumerate(GOOGLE_API_KEYS):
+            try:
+                temp_client = genai.Client(api_key=key)
+                # Just check primary model for each key to verify key validity
+                temp_client.models.get(model=fmt_model(primary_model))
+                logger.info(f"✓ Google API Key {i+1} is VALID")
+                llm_available = True
+                active_keys += 1
+            except Exception as e:
+                logger.warning(f"⚠ Google API Key {i+1} is INVALID or UNREACHABLE: {e}")
+
+    if not llm_available:
+        logger.error("✗ ALL Gemini API keys failed or none provided.")
+    else:
+        logger.info(f"✓ Gemini service active ({active_keys}/{len(GOOGLE_API_KEYS)} keys functional)")
 
     app.state.rag_available = rag_available
     app.state.llm_available = llm_available
     app.state.orchestrator_available = ORCHESTRATOR_AVAILABLE
+    app.state.active_llm_keys = active_keys
 
     if not (rag_available and llm_available):
         logger.error("CRITICAL: One or more backend services are unreachable. Pipeline may fail.")

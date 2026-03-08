@@ -22,11 +22,19 @@ class Config:
 
     # Provider API Keys
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    GOOGLE_API_KEY_2 = os.getenv("GOOGLE_API_KEY_2")
+    GOOGLE_API_KEY_3 = os.getenv("GOOGLE_API_KEY_3")
+    GOOGLE_API_KEYS = [k for k in [GOOGLE_API_KEY, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3] if k]
+    
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     # Specific embedding models
     GOOGLE_EMBEDDING_MODEL = "models/text-embedding-004"
     OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+
+    # LLM Models
+    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-pro")
+    LLM_MODEL_FALLBACK = os.getenv("LLM_MODEL_FALLBACK", "gemini-2.0-flash")
 
     # Redis
     REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
