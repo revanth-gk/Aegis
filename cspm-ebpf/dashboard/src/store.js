@@ -142,7 +142,10 @@ export const useStore = create((set, get) => ({
   closeForensics: () => set({ selectedEvent: null, forensicsData: null, currentPage: 'ledger' }),
 
   // ── Neutralize ──
+  neutralizeLoading: false,
+  neutralizeResult: null,
   neutralizeEvent: async (eventId) => {
+    set({ neutralizeLoading: true, neutralizeResult: null })
     try {
       const res = await fetch(`${API_BASE}/api/remediation/execute/${eventId}`, { method: 'POST' })
       let data;
@@ -154,14 +157,18 @@ export const useStore = create((set, get) => ({
       if (res.ok && data.immunity_score !== undefined) {
         set({ immunityScore: data.immunity_score })
       }
+      set({ neutralizeLoading: false, neutralizeResult: data })
       // Refresh immunity score
       get().fetchImmunityScore()
       return data
     } catch (err) {
       console.error('Failed to neutralize via remediation agent:', err)
-      return { error: err.message }
+      const errorResult = { error: err.message }
+      set({ neutralizeLoading: false, neutralizeResult: errorResult })
+      return errorResult
     }
   },
+  clearNeutralizeResult: () => set({ neutralizeResult: null, neutralizeLoading: false }),
 
   // ── Bulk Data Fetch ──
   fetchAllData: async () => {

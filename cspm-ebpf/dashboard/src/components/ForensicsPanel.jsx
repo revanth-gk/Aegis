@@ -12,7 +12,7 @@
 import { useStore } from '../store'
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronLeft, Brain, Terminal, CheckCircle2, Loader2, Shield, Zap, Activity, SlidersHorizontal } from 'lucide-react'
+import { ChevronLeft, Brain, Terminal, CheckCircle2, Loader2, Shield, Zap, Activity, SlidersHorizontal, AlertTriangle, FileCode } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -26,12 +26,21 @@ const GRADE_STYLE = {
 }
 
 export default function ForensicsPanel() {
-  const { selectedEvent, forensicsData, forensicsLoading, closeForensics, neutralizeEvent, navigate } = useStore()
+  const { selectedEvent, forensicsData, forensicsLoading, closeForensics, neutralizeEvent, neutralizeResult, clearNeutralizeResult, navigate } = useStore()
   const [isNeutralizing, setIsNeutralizing] = useState(false)
   const [neutralized, setNeutralized] = useState(false)
+  const [remediationResult, setRemediationResult] = useState(null)
   const [streamedText, setStreamedText] = useState('')
   const [streamComplete, setStreamComplete] = useState(false)
   const streamRef = useRef(null)
+
+  // Reset remediation state when selected event changes
+  useEffect(() => {
+    setNeutralized(false)
+    setRemediationResult(null)
+    setIsNeutralizing(false)
+    clearNeutralizeResult()
+  }, [selectedEvent?.event_id])
 
   useEffect(() => {
     if (!forensicsData?.reasoning) return
@@ -55,13 +64,12 @@ export default function ForensicsPanel() {
   const handleNeutralize = async () => {
     if (!selectedEvent) return
     setIsNeutralizing(true)
+    setRemediationResult(null)
     const result = await neutralizeEvent(selectedEvent.event_id)
     setIsNeutralizing(false)
+    setRemediationResult(result)
     if (result && !result.error) {
       setNeutralized(true)
-    } else {
-      console.error("Remediation failed:", result?.error)
-      alert(`Remediation failed: ${result?.error || 'Unknown error'}`)
     }
   }
 
@@ -266,37 +274,87 @@ export default function ForensicsPanel() {
             </ScrollArea>
           </div>
 
-          {/* Remediation YAML */}
-          <div className="h-80 flex flex-col overflow-hidden">
+          {/* Remediation YAML + Results */}
+          <div className="h-96 flex flex-col overflow-hidden">
             <div className="shrink-0 px-6 py-4 border-b border-border flex items-center justify-between bg-muted/5 z-0">
               <div className="flex items-center gap-3">
                 <Terminal className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm font-semibold text-foreground tracking-tight">Remediation Policy (YAML)</span>
+                {remediationResult && !remediationResult.error && (
+                  <span className="text-[10px] font-mono font-medium text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                    {remediationResult.action} · {remediationResult.dry_run ? 'DRY RUN' : remediationResult.status}
+                  </span>
+                )}
               </div>
-              <Button
-                size="sm"
-                disabled={!streamComplete || isNeutralizing || neutralized}
-                onClick={handleNeutralize}
-                className={`h-9 px-4 text-xs font-bold tracking-wider cursor-pointer shadow-sm transition-all rounded-md
-                  ${neutralized
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/10'
-                    : streamComplete
-                      ? 'bg-destructive text-white hover:bg-destructive/90 shadow-[0_4px_10px_rgba(239,68,68,0.2)]'
-                      : 'bg-muted text-muted-foreground cursor-not-allowed border border-border'
-                  }`}
-              >
-                {neutralized ? <><CheckCircle2 className="w-4 h-4 mr-2" />Neutralized</>
-                  : isNeutralizing ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Patching...</>
-                  : <><Shield className="w-4 h-4 mr-2" />Neutralize & Patch</>}
-              </Button>
+              <div className="flex items-center gap-3">
+                {remediationResult?.error && (
+                  <span className="text-[10px] text-destructive flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> {remediationResult.error.slice(0, 60)}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  disabled={!streamComplete || isNeutralizing || neutralized}
+                  onClick={handleNeutralize}
+                  className={`h-9 px-4 text-xs font-bold tracking-wider cursor-pointer shadow-sm transition-all rounded-md
+                    ${neutralized
+                      ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/10'
+                      : streamComplete
+                        ? 'bg-destructive text-white hover:bg-destructive/90 shadow-[0_4px_10px_rgba(239,68,68,0.2)]'
+                        : 'bg-muted text-muted-foreground cursor-not-allowed border border-border'
+                    }`}
+                >
+                  {neutralized ? <><CheckCircle2 className="w-4 h-4 mr-2" />Neutralized</>
+                    : isNeutralizing ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Patching...</>
+                    : <><Shield className="w-4 h-4 mr-2" />Neutralize & Patch</>}
+                </Button>
+              </div>
             </div>
+
+            {/* Remediation result summary bar */}
+            {remediationResult && !remediationResult.error && (
+              <div className={`shrink-0 px-6 py-3 border-b border-border flex items-center gap-6 text-xs font-mono
+                ${remediationResult.dry_run ? 'bg-amber-500/5' : 'bg-emerald-500/5'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Action:</span>
+                  <span className={`font-bold ${remediationResult.action === 'SIGKILL' ? 'text-destructive' : 'text-blue-400'}`}>
+                    {remediationResult.action || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Status:</span>
+                  <span className={`font-bold ${remediationResult.status === 'succeeded' || remediationResult.status === 'dry_run' ? 'text-emerald-500' : 'text-destructive'}`}>
+                    {remediationResult.status}
+                  </span>
+                </div>
+                {remediationResult.target && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Target:</span>
+                    <span className="text-foreground/80">{remediationResult.target.pod}/{remediationResult.target.namespace}</span>
+                  </div>
+                )}
+                {remediationResult.mitre && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">MITRE:</span>
+                    <span className="text-destructive">{remediationResult.mitre.id}</span>
+                  </div>
+                )}
+                {remediationResult.dry_run && (
+                  <span className="text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                    Dry Run — YAML validated, not applied
+                  </span>
+                )}
+              </div>
+            )}
+
             {data?.remediation ? (
               <Tabs defaultValue="diff" className="flex-1 flex flex-col overflow-hidden">
                 <TabsList className="shrink-0 h-10 bg-transparent border-b border-border rounded-none justify-start px-6 gap-3 pt-2 font-medium">
-                  {['diff', 'insecure', 'secure'].map(tab => (
+                  {['diff', 'insecure', 'secure', ...(remediationResult?.yaml_applied ? ['applied'] : [])].map(tab => (
                     <TabsTrigger key={tab} value={tab}
-                      className="h-8 px-4 text-xs font-semibold uppercase rounded-md data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground cursor-pointer transition-colors border border-transparent data-[state=active]:border-border data-[state=active]:shadow-sm">
-                      {tab}
+                      className={`h-8 px-4 text-xs font-semibold uppercase rounded-md data-[state=active]:bg-muted data-[state=active]:text-foreground text-muted-foreground cursor-pointer transition-colors border border-transparent data-[state=active]:border-border data-[state=active]:shadow-sm
+                        ${tab === 'applied' ? 'data-[state=active]:bg-emerald-500/10 data-[state=active]:text-emerald-500 data-[state=active]:border-emerald-500/20' : ''}`}>
+                      {tab === 'applied' ? <><FileCode className="w-3 h-3 mr-1.5" />Applied YAML</> : tab}
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -322,6 +380,14 @@ export default function ForensicsPanel() {
                 <TabsContent value="secure" className="flex-1 overflow-auto m-0 p-5 bg-emerald-500/5">
                   <YamlCode code={data.remediation.secure_yaml} variant="secure" />
                 </TabsContent>
+                {remediationResult?.yaml_applied && (
+                  <TabsContent value="applied" className="flex-1 overflow-auto m-0 p-5 bg-emerald-500/5">
+                    <div className="text-[10px] text-emerald-500 font-bold mb-3 uppercase tracking-widest flex items-center gap-2">
+                      <CheckCircle2 className="w-3 h-3" /> Applied via kubectl {remediationResult.dry_run ? '(dry run)' : ''}
+                    </div>
+                    <YamlCode code={remediationResult.yaml_applied} variant="secure" />
+                  </TabsContent>
+                )}
               </Tabs>
             ) : (
               <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background">Loading remediation...</div>
