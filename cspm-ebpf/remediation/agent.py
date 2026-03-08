@@ -155,10 +155,22 @@ class RemediationAgent:
         Requirements:
             6.6: Extract pod, namespace, pid from event context
         """
+        # Events may have telemetry nested or fields at top level
+        telemetry = raw_event.get("telemetry", {})
         return {
-            "pod": raw_event.get("pod_name", raw_event.get("pod", "unknown")),
-            "namespace": raw_event.get("namespace", "default"),
-            "pid": raw_event.get("pid", 0)
+            "pod": (
+                telemetry.get("pod")
+                or raw_event.get("pod_name")
+                or raw_event.get("pod", "unknown")
+            ),
+            "namespace": (
+                telemetry.get("namespace")
+                or raw_event.get("namespace", "default")
+            ),
+            "pid": (
+                telemetry.get("pid")
+                or raw_event.get("pid", 0)
+            ),
         }
     
     def _requires_human_approval(self, action_type: str) -> bool:

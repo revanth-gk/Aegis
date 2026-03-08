@@ -46,6 +46,7 @@ REDIS_STREAM_KEY = os.getenv("REDIS_STREAM_KEY", "sentinel:events")
 FORWARDER_API_URL = os.getenv("FORWARDER_API_URL", "http://localhost:8081")
 DASHBOARD_API_PORT = int(os.getenv("DASHBOARD_API_PORT", "8080"))
 POLICIES_DIR = os.getenv("POLICIES_DIR", os.path.join(os.path.dirname(__file__), "policies"))
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -88,6 +89,86 @@ try:
                 _remediation_config.autonomy_mode, _remediation_config.dry_run)
 except Exception as e:
     logger.warning("⚠️  Remediation agent not available (%s). Remediation endpoints will return errors.", e)
+
+# ── Gemini AI Client (for RAG-powered YAML generation) ───────────
+_genai_client = None
+
+try:
+    if GOOGLE_API_KEY:
+        from google import genai
+        _genai_client = genai.Client(api_key=GOOGLE_API_KEY)
+        logger.info("✅ Gemini AI client initialized for RAG YAML generation")
+    else:
+        logger.warning("⚠️  GOOGLE_API_KEY not set. RAG YAML generation will use templates.")
+except Exception as e:
+    logger.warning("⚠️  Gemini AI client not available (%s). RAG YAML generation will use templates.", e)
+
+
+def _generate_rag_yaml(event: dict, mitre: dict, reasoning_text: str) -> str:
+    """
+    Generate contextual Kubernetes remediation YAML using Gemini AI (RAG).
+
+    Falls back to template-based generation if AI is unavailable.
+    """
+    telemetry = event.get("telemetry", {})
+    pod = telemetry.get("pod", "affected-pod")
+    namespace = telemetry.get("namespace", "default")
+    binary = telemetry.get("binary", "unknown")
+    binary_basename = binary.rsplit("/", 1)[-1] if binary else "unknown"
+    uid = telemetry.get("uid", 1000)
+    args = telemetry.get("args", [])
+    triage = event.get("triage", {}) or {}
+    grade = triage.get("grade", "TP") if isinstance(triage, dict) else "TP"
+
+    if not _genai_client:
+        return _generate_yaml_fix(grade, event, mitre)
+
+    prompt = f"""You are a Kubernetes security remediation expert. Generate a precise Kubernetes YAML manifest to remediate the following security threat detected in a production cluster.
+
+THREAT DETAILS:
+- MITRE Technique: {mitre.get('id', 'N/A')} — {mitre.get('name', 'Unknown')}
+- MITRE Tactic: {mitre.get('tactic', 'Unknown')}
+- Pod: {pod}
+- Namespace: {namespace}
+- Binary: {binary_basename}
+- Arguments: {' '.join(str(a) for a in args) if args else 'N/A'}
+- User UID: {uid}
+- Classification: {grade} (True Positive)
+
+CONTEXT:
+{reasoning_text[:500] if reasoning_text else 'High-confidence threat requiring immediate remediation.'}
+
+REQUIREMENTS:
+1. Generate ONLY valid Kubernetes YAML — no explanation, no markdown fences
+2. Choose the most appropriate resource type:
+   - NetworkPolicy: for network-related threats (C2, exfiltration, lateral movement)
+   - Pod SecurityContext patch: for execution, privilege escalation, credential access
+   - RBAC (Role/RoleBinding): for permission-related issues
+3. Use the actual pod name "{pod}" and namespace "{namespace}"
+4. Add annotation "sentinel-core.io/auto-generated: true" and "sentinel-core.io/mitre: {mitre.get('id', 'N/A')}"
+5. Ensure the YAML is immediately applicable via kubectl apply -f
+
+Output ONLY the raw YAML content, starting with "apiVersion:". No markdown, no code fences, no explanation."""
+
+    try:
+        response = _genai_client.models.generate_content(
+            model=os.getenv("LLM_MODEL", "gemini-2.5-flash"),
+            contents=prompt,
+        )
+        yaml_text = response.text.strip()
+
+        # Strip markdown fences if the model added them
+        if yaml_text.startswith("```"):
+            lines = yaml_text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            yaml_text = "\n".join(lines).strip()
+
+        # Validate YAML
+        yaml.safe_load(yaml_text)
+        return yaml_text
+    except Exception as e:
+        logger.warning("RAG YAML generation failed (%s), falling back to template", e)
+        return _generate_yaml_fix(grade, event, mitre)
 
 # ── In-Memory State ───────────────────────────────────────────────
 _event_cache: list[dict] = []
@@ -445,7 +526,7 @@ def _build_forensics(event: dict) -> dict:
     }
     detected_tactic_id = tactic_map.get(mitre.get("tactic", ""), "TA0002")
 
-    yaml_fix = _generate_yaml_fix(grade, event, mitre)
+    yaml_fix = _generate_rag_yaml(event, mitre, reasoning_text)
     insecure_yaml = f"""apiVersion: v1
 kind: Pod
 metadata:
@@ -861,6 +942,11 @@ async def execute_remediation(event_id: str):
     triage = event.get("triage", {}) or {}
     mitre = _resolve_mitre(event)
 
+    # Generate RAG-powered YAML fix
+    unified = _build_unified_result(event)
+    reasoning_text = unified.get("reasoning", {}).get("guide_explanation", "")
+    rag_yaml = _generate_rag_yaml(event, mitre, reasoning_text)
+
     # Build the SentinelState dict expected by the remediation agent
     state = {
         "event_id": event_id,
@@ -872,10 +958,7 @@ async def execute_remediation(event_id: str):
             "name": mitre["name"],
             "tactic": mitre["tactic"],
         }] if mitre.get("id") != "N/A" else [],
-        "yaml_fix": _generate_yaml_fix(
-            triage.get("grade", "TP") if isinstance(triage, dict) else "TP",
-            event, mitre
-        ),
+        "yaml_fix": rag_yaml,
     }
 
     # Execute remediation
@@ -900,8 +983,8 @@ async def execute_remediation(event_id: str):
         logger.info("🛡️ Remediation executed for event %s: action=%s, status=%s",
                      event_id, result.get("remediation_action"), result.get("remediation_status"))
 
-        # Also mark as neutralized if succeeded
-        if result.get("remediation_status") == "succeeded":
+        # Also mark as neutralized if succeeded or dry_run
+        if result.get("remediation_status") in ("succeeded", "dry_run"):
             _neutralized_events.add(event_id)
 
         return {
@@ -913,6 +996,18 @@ async def execute_remediation(event_id: str):
             "dry_run": _remediation_config.dry_run if _remediation_config else True,
             "autonomy_mode": _remediation_config.autonomy_mode if _remediation_config else "unknown",
             "immunity_score": _compute_immunity_score(_event_cache)["score"],
+            "yaml_applied": rag_yaml if result.get("remediation_action") == "YAML" else None,
+            "mitre": {
+                "id": mitre.get("id", "N/A"),
+                "name": mitre.get("name", "Unknown"),
+                "tactic": mitre.get("tactic", "Unknown"),
+            },
+            "target": {
+                "pod": telemetry.get("pod", "unknown"),
+                "namespace": telemetry.get("namespace", "default"),
+                "pid": telemetry.get("pid", 0),
+                "binary": telemetry.get("binary", "unknown"),
+            },
         }
 
     except Exception as e:

@@ -28,13 +28,13 @@ class DecisionGate:
     - YAML (resource patch): >= 0.95 confidence
     """
     
-    def __init__(self, sigkill_threshold: float = 0.92, yaml_threshold: float = 0.95):
+    def __init__(self, sigkill_threshold: float = 0.85, yaml_threshold: float = 0.75):
         """
         Initialize Decision Gate with confidence thresholds.
         
         Args:
-            sigkill_threshold: Minimum confidence for SIGKILL actions (default: 0.92)
-            yaml_threshold: Minimum confidence for YAML actions (default: 0.95)
+            sigkill_threshold: Minimum confidence for SIGKILL actions (default: 0.85)
+            yaml_threshold: Minimum confidence for YAML actions (default: 0.75)
         """
         self.sigkill_threshold = sigkill_threshold
         self.yaml_threshold = yaml_threshold

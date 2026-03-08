@@ -3,7 +3,7 @@
 # ║  One-command orchestration for the eBPF security pipeline   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-.PHONY: help up down demo logs test forwarder install port-forward clean
+.PHONY: help up down demo logs test forwarder install port-forward clean dashboard-api dashboard docker-up docker-down
 
 SHELL := /bin/bash
 
@@ -35,6 +35,7 @@ port-forward: ## Port-forward Tetragon gRPC to localhost:54321
 install: ## Install Python dependencies into a virtualenv
 	$(PYTHON) -m venv $(VENV_DIR)
 	$(VENV_DIR)/bin/pip install --upgrade pip
+	$(VENV_DIR)/bin/pip install -r requirements.txt
 	$(VENV_DIR)/bin/pip install -r forwarder/requirements.txt
 	@echo "✅ Run 'source $(VENV_DIR)/bin/activate' to activate the virtualenv."
 
@@ -73,3 +74,45 @@ clean: ## Remove virtualenv and cached files
 	rm -rf $(VENV_DIR) __pycache__ forwarder/__pycache__ forwarder/tests/__pycache__
 	rm -rf .pytest_cache forwarder/.pytest_cache
 	find . -name "*.pyc" -delete
+
+# ── Dashboard API ─────────────────────────────────────────────────
+
+dashboard-api: ## Start the Dashboard API server (port 8080)
+	$(VENV_DIR)/bin/python dashboard_api.py
+
+# ── Frontend Dashboard ────────────────────────────────────────────
+
+dashboard: ## Start the Vite frontend dev server (port 5173)
+	cd dashboard && npm run dev
+
+# ── Docker Compose ────────────────────────────────────────────────
+
+docker-up: ## Start all services via Docker Compose
+	docker compose up --build -d
+	@echo "✅ Services running:"
+	@echo "  Dashboard API:   http://localhost:8080"
+	@echo "  Forwarder API:   http://localhost:8081"
+	@echo "  Orchestrator:    http://localhost:8000"
+	@echo "  Redis:           localhost:6379"
+	@echo "  ChromaDB:        http://localhost:8100"
+
+docker-down: ## Stop all Docker Compose services
+	docker compose down
+
+# ── Full Stack (Local Dev) ────────────────────────────────────────
+
+run-all: ## Start Redis + Forwarder + Dashboard API + Frontend (local dev)
+	@echo "Starting Sentinel-Core full stack..."
+	@echo "Ensure Redis is running on port 6379"
+	@echo "Starting Forwarder API (port 8081)..."
+	$(VENV_DIR)/bin/python live_backend.py &
+	@sleep 2
+	@echo "Starting Dashboard API (port 8080)..."
+	$(VENV_DIR)/bin/python dashboard_api.py &
+	@sleep 2
+	@echo "Starting Frontend (port 5173)..."
+	cd dashboard && npm run dev &
+	@echo "✅ All services started"
+	@echo "  Frontend:        http://localhost:5173"
+	@echo "  Dashboard API:   http://localhost:8080"
+	@echo "  Forwarder API:   http://localhost:8081"

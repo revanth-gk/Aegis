@@ -48,8 +48,8 @@ class RemediationConfig:
     
     autonomy_mode: AutonomyMode = field(default="tiered")
     dry_run: bool = field(default=True)
-    sigkill_threshold: float = field(default=0.92)
-    yaml_threshold: float = field(default=0.95)
+    sigkill_threshold: float = field(default=0.85)
+    yaml_threshold: float = field(default=0.75)
     kubeconfig_path: Optional[str] = field(default=None)
     
     def __post_init__(self):
@@ -184,8 +184,8 @@ class RemediationConfig:
         dry_run = dry_run_str in ("true", "1", "yes")
         
         # Load confidence thresholds
-        sigkill_threshold = float(os.getenv("REMEDIATION_SIGKILL_THRESHOLD", "0.92"))
-        yaml_threshold = float(os.getenv("REMEDIATION_YAML_THRESHOLD", "0.95"))
+        sigkill_threshold = float(os.getenv("REMEDIATION_SIGKILL_THRESHOLD", "0.85"))
+        yaml_threshold = float(os.getenv("REMEDIATION_YAML_THRESHOLD", "0.75"))
         
         # Load kubeconfig path (None means in-cluster auth)
         kubeconfig_path = os.getenv("KUBECONFIG_PATH")

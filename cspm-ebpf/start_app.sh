@@ -250,5 +250,53 @@ PYEOF
 echo "============================================================"
 echo "  STREAM ACTIVE — Real eBPF events flowing"
 echo "============================================================"
+
+# ── 7. Start Dashboard API (port 8080) ───────────────────────────
+echo ""
+echo "[7/8] Starting Dashboard API on port 8080..."
+export REMEDIATION_DRY_RUN="${REMEDIATION_DRY_RUN:-false}"
+export REMEDIATION_AUTONOMY_MODE="${REMEDIATION_AUTONOMY_MODE:-autonomous}"
+export REMEDIATION_SIGKILL_THRESHOLD="${REMEDIATION_SIGKILL_THRESHOLD:-0.85}"
+export REMEDIATION_YAML_THRESHOLD="${REMEDIATION_YAML_THRESHOLD:-0.75}"
+python3 dashboard_api.py &
+DASHBOARD_API_PID=$!
+echo "  ✓ Dashboard API PID: $DASHBOARD_API_PID"
+sleep 2
+
+# ── 8. Start Frontend Dashboard (port 5173) ──────────────────────
+echo ""
+echo "[8/8] Starting Frontend Dashboard on port 5173..."
+if [ -f dashboard/package.json ]; then
+    cd dashboard
+    if [ ! -d node_modules ]; then
+        echo "  ↳ Installing npm dependencies..."
+        npm install
+    fi
+    npm run dev &
+    FRONTEND_PID=$!
+    cd ..
+    echo "  ✓ Frontend PID: $FRONTEND_PID"
+else
+    echo "  ⚠ No dashboard/package.json found, skipping frontend"
+fi
+
+echo ""
+echo "============================================================"
+echo "  SENTINEL-CORE FULL STACK RUNNING"
+echo "============================================================"
+echo "  Frontend Dashboard:  http://localhost:5173"
+echo "  Dashboard API:       http://localhost:8080"
+echo "  Forwarder API:       http://localhost:8081"
+echo "  Redis:               localhost:6379"
+echo "============================================================"
+echo ""
+echo "  Streaming eBPF events from cluster..."
+echo "  Press Ctrl+C to stop all services"
+echo ""
+
+# Start the eBPF event stream (this blocks)
 kubectl logs -n kube-system -l app.kubernetes.io/name=tetragon \
     -c export-stdout -f --since=1m | python3 _sentinel_live.py
+
+# Cleanup on exit
+trap "kill $DASHBOARD_API_PID $FRONTEND_PID 2>/dev/null; exit 0" INT TERM
