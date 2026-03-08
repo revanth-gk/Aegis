@@ -58,12 +58,14 @@ export default function CommandCenter() {
         {/* Blocked Threats */}
         <div className="glass-card flex-1 min-w-[220px] p-5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold text-muted-foreground">Blocked Threats</div>
+            <div className="text-sm font-semibold text-muted-foreground">Active Threats</div>
             <Shield className="w-4 h-4 text-destructive/80" />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight text-destructive drop-shadow-sm">{tpCount}</span>
-            <span className="text-xs text-muted-foreground font-medium">{triageStats?.percentages?.TruePositive || 0}% of events</span>
+            <span className="text-3xl font-bold tracking-tight text-destructive drop-shadow-sm">{metrics?.active_alerts || 0}</span>
+            <span className="text-xs text-muted-foreground font-medium">
+              {metrics?.neutralized_count ? `${metrics.neutralized_count} neutralized` : 'critical + high'}
+            </span>
           </div>
         </div>
 
@@ -144,14 +146,19 @@ export default function CommandCenter() {
           <div className="glass-panel p-5 rounded-xl">
             <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
-              Severity Breakdown
+              Active Severity Breakdown
             </div>
             <div className="space-y-3">
-              <SeverityRow label="CRITICAL" count={metrics?.severity_breakdown?.critical || 0} total={metrics?.events_total || 1} color="text-destructive font-bold" barColor="bg-destructive shadow-[0_0_8px_rgba(var(--destructive),0.5)]" />
-              <SeverityRow label="HIGH"     count={metrics?.severity_breakdown?.high || 0}     total={metrics?.events_total || 1} color="text-orange-500 font-bold" barColor="bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
-              <SeverityRow label="MEDIUM"   count={metrics?.severity_breakdown?.medium || 0}   total={metrics?.events_total || 1} color="text-amber-500 font-medium" barColor="bg-amber-500" />
-              <SeverityRow label="LOW"      count={metrics?.severity_breakdown?.low || 0}      total={metrics?.events_total || 1} color="text-muted-foreground" barColor="bg-muted-foreground" />
+              <SeverityRow label="CRITICAL" count={metrics?.active_severity?.critical || 0} total={metrics?.events_total || 1} color="text-destructive font-bold" barColor="bg-destructive shadow-[0_0_8px_rgba(var(--destructive),0.5)]" />
+              <SeverityRow label="HIGH"     count={metrics?.active_severity?.high || 0}     total={metrics?.events_total || 1} color="text-orange-500 font-bold" barColor="bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
+              <SeverityRow label="MEDIUM"   count={metrics?.active_severity?.medium || 0}   total={metrics?.events_total || 1} color="text-amber-500 font-medium" barColor="bg-amber-500" />
+              <SeverityRow label="LOW"      count={metrics?.active_severity?.low || 0}      total={metrics?.events_total || 1} color="text-muted-foreground" barColor="bg-muted-foreground" />
             </div>
+            {(metrics?.neutralized_count || 0) > 0 && (
+              <div className="mt-3 pt-3 border-t border-border text-xs text-emerald-500 font-mono">
+                {metrics.neutralized_count} threat{metrics.neutralized_count === 1 ? '' : 's'} neutralized
+              </div>
+            )}
           </div>
 
           {/* ML Triage Distribution */}

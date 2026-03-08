@@ -724,11 +724,16 @@ async def api_metrics():
         if resp.status_code == 200:
             data = resp.json()
             severity_breakdown = defaultdict(int)
+            active_severity = defaultdict(int)
             for e in _event_cache:
                 sev = e.get("severity", "low")
                 severity_breakdown[sev] += 1
+                if e.get("event_id") not in _neutralized_events:
+                    active_severity[sev] += 1
             data["severity_breakdown"] = dict(severity_breakdown)
-            data["active_alerts"] = severity_breakdown.get("critical", 0) + severity_breakdown.get("high", 0)
+            data["active_severity"] = dict(active_severity)
+            data["active_alerts"] = active_severity.get("critical", 0) + active_severity.get("high", 0)
+            data["neutralized_count"] = len(_neutralized_events)
             return data
     except Exception:
         pass
@@ -736,10 +741,14 @@ async def api_metrics():
     events = _event_cache
     by_type = defaultdict(int)
     severity_breakdown = defaultdict(int)
+    active_severity = defaultdict(int)
 
     for e in events:
         by_type[e.get("event_type", "unknown")] += 1
-        severity_breakdown[e.get("severity", "low")] += 1
+        sev = e.get("severity", "low")
+        severity_breakdown[sev] += 1
+        if e.get("event_id") not in _neutralized_events:
+            active_severity[sev] += 1
 
     last_ts = events[0].get("timestamp") if events else None
 
@@ -747,19 +756,25 @@ async def api_metrics():
         "events_total": len(events),
         "events_by_type": dict(by_type),
         "severity_breakdown": dict(severity_breakdown),
+        "active_severity": dict(active_severity),
         "errors_total": 0,
         "last_event_timestamp": last_ts,
         "uptime_seconds": 0,
         "events_per_second": 0,
-        "active_alerts": severity_breakdown.get("critical", 0) + severity_breakdown.get("high", 0),
+        "active_alerts": active_severity.get("critical", 0) + active_severity.get("high", 0),
+        "neutralized_count": len(_neutralized_events),
         "redis_connected": _redis is not None,
     }
 
 
 @app.get("/api/events")
 async def api_events(limit: int = Query(default=100, le=300)):
-    """Return enriched events from Redis stream."""
-    return {"events": _event_cache[:limit]}
+    """Return enriched events from Redis stream, with neutralized flag."""
+    events = []
+    for e in _event_cache[:limit]:
+        ev = {**e, "neutralized": e.get("event_id") in _neutralized_events}
+        events.append(ev)
+    return {"events": events}
 
 
 @app.get("/api/cluster")

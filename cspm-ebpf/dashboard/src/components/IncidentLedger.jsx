@@ -99,9 +99,11 @@ export default function IncidentLedger() {
 
   const hasFilter = searchQuery || gradeFilter || severityFilter
 
-  // Summary counts for context
-  const tpCount = filtered.filter(e => e.triage?.grade === 'TP').length
-  const critCount = filtered.filter(e => e.severity === 'critical').length
+  // Summary counts — exclude neutralized events from active threat counts
+  const activeFiltered = filtered.filter(e => !e.neutralized)
+  const tpCount = activeFiltered.filter(e => e.triage?.grade === 'TP').length
+  const critCount = activeFiltered.filter(e => e.severity === 'critical').length
+  const neutralizedCount = filtered.filter(e => e.neutralized).length
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
@@ -195,6 +197,7 @@ export default function IncidentLedger() {
         <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground font-mono">
           {tpCount > 0 && <span className="text-destructive font-bold">{tpCount} TP</span>}
           {critCount > 0 && <span className="text-orange-500 font-bold">{critCount} crit</span>}
+          {neutralizedCount > 0 && <span className="text-emerald-500 font-bold">{neutralizedCount} neutralized</span>}
           <span>{filtered.length} results</span>
         </div>
       </div>
@@ -229,14 +232,16 @@ export default function IncidentLedger() {
                 const ss = SEV_STYLE[event.severity] || SEV_STYLE.medium
                 const pt = event.processing_time || {}
                 const isTP = grade === 'TP'
+                const isNeutralized = event.neutralized
 
                 return (
                   <TableRow
                     key={event.event_id}
                     onClick={() => openForensics(event)}
                     className={`border-border cursor-pointer text-sm h-11 transition-colors
+                      ${isNeutralized ? 'opacity-50' : ''}
                       ${isNew ? 'bg-primary/5' : ''}
-                      ${isTP ? 'hover:bg-destructive/10' : 'hover:bg-muted/50'}`}
+                      ${isTP && !isNeutralized ? 'hover:bg-destructive/10' : 'hover:bg-muted/50'}`}
                   >
                     {/* Time */}
                     <TableCell className="font-mono text-xs text-muted-foreground pl-6 py-2">
@@ -246,10 +251,19 @@ export default function IncidentLedger() {
                     {/* Severity */}
                     <TableCell className="py-2">
                       <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${ss.dot}`} />
-                        <span className={`text-xs font-bold uppercase tracking-wider ${ss.text}`}>
-                          {(event.severity || 'med').slice(0, 4)}
-                        </span>
+                        {isNeutralized ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span className="text-xs font-bold uppercase tracking-wider text-emerald-500">NTZD</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`w-2 h-2 rounded-full ${ss.dot}`} />
+                            <span className={`text-xs font-bold uppercase tracking-wider ${ss.text}`}>
+                              {(event.severity || 'med').slice(0, 4)}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </TableCell>
 

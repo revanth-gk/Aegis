@@ -154,12 +154,18 @@ export const useStore = create((set, get) => ({
       } catch (e) {
         data = { error: res.statusText }
       }
-      if (res.ok && data.immunity_score !== undefined) {
-        set({ immunityScore: data.immunity_score })
+      if (res.ok && !data.error) {
+        // Mark this event as neutralized in the local events array
+        set((state) => ({
+          events: state.events.map(e =>
+            e.event_id === eventId ? { ...e, neutralized: true } : e
+          ),
+          immunityScore: data.immunity_score ?? state.immunityScore,
+        }))
       }
       set({ neutralizeLoading: false, neutralizeResult: data })
-      // Refresh immunity score
-      get().fetchImmunityScore()
+      // Refresh all data to get updated metrics/counts from backend
+      get().fetchAllData()
       return data
     } catch (err) {
       console.error('Failed to neutralize via remediation agent:', err)
