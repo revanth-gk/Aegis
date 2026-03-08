@@ -83,7 +83,6 @@ class MLTriage:
                 confidence = 1.0
 
             status = self.reverse_label_map.get(prediction, "TruePositive")
-            status_formatted = status.replace("Positive", " Positive")
 
             grade_map = {
                 "FalsePositive": "FP",
@@ -91,6 +90,33 @@ class MLTriage:
                 "TruePositive": "TP"
             }
             grade = grade_map.get(status, "TP")
+
+            # ── Rule-based override ──────────────────────────────────
+            # The synthetic XGBoost model is heavily biased toward FP.
+            # Use security heuristic features to correct obvious misclassifications.
+            risk_score = (
+                feature_data.get("binary_risk", 0) * 2
+                + feature_data.get("sensitive_path", 0) * 3
+                + feature_data.get("has_network_args", 0) * 2
+                + feature_data.get("parent_is_shell", 0) * 1
+                + feature_data.get("is_root", 0) * 2
+                + feature_data.get("syscall_risk", 0) * 1
+            )
+            original_grade = grade
+            if grade == "FP" and risk_score >= 5:
+                grade = "TP"
+                confidence = min(0.70 + risk_score * 0.03, 0.95)
+            elif grade == "FP" and risk_score >= 3:
+                grade = "BP"
+                confidence = min(0.60 + risk_score * 0.05, 0.85)
+            # ─────────────────────────────────────────────────────────
+
+            status_formatted = {"TP": "True Positive", "BP": "Benign Positive", "FP": "False Positive"}.get(grade, grade)
+
+            override_note = ""
+            if original_grade != grade:
+                override_note = f" (overridden from {original_grade} by heuristic rules, risk_score={risk_score})"
+                logger.info("Triage override: %s -> %s (risk_score=%d)", original_grade, grade, risk_score)
             
             return {
                 "triage": {
@@ -98,8 +124,8 @@ class MLTriage:
                     "confidence": round(confidence, 2)
                 },
                 "explanation": {
-                    "mitre_id": "N/A",  # Resolving this later in API
-                    "guidance": f"ML model predicted {status_formatted} with {confidence*100:.1f}% confidence."
+                    "mitre_id": "N/A",
+                    "guidance": f"ML model predicted {status_formatted} with {confidence*100:.1f}% confidence.{override_note}"
                 },
                 "deliverable": f"This event is a {confidence*100:.0f}% {status_formatted}."
             }
