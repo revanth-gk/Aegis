@@ -235,10 +235,41 @@ def _enrich_event_for_dashboard(event: dict) -> dict:
 
 
 def _refresh_event_cache():
-    """Refresh the in-memory event cache from Redis."""
+    """Mock exactly 15 events for the demo."""
     global _event_cache
-    raw_events = _read_events_from_redis(300)
-    _event_cache = [_enrich_event_for_dashboard(e) for e in raw_events]
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    
+    events = []
+    
+    def make_event(i, evt_type, sev, grade, conf, mitre, desc):
+        ts = (now - datetime.timedelta(minutes=i)).isoformat()
+        base = {
+            "event_id": f"evt-mock-{i}",
+            "timestamp": ts,
+            "event_type": evt_type,
+            "telemetry": {"binary": "/bin/bash", "pod": "demo-pod", "namespace": "default"},
+            "severity": sev,
+            "description": desc,
+            "processing_time": {"ebpf_intercept_ms": 0.2, "guide_triage_ms": 50, "ai_reasoning_ms": 1200}
+        }
+        if grade:
+            base["triage"] = {"grade": grade, "confidence": conf}
+            base["explanation"] = {"mitre_id": mitre, "guidance": "Spoofed instruction"}
+        return base
+        
+    events.append(make_event(1, "process_exec", "critical", "TP", 0.95, "T1059", "bash executed in pod demo-pod/default"))
+    events.append(make_event(2, "process_exec", "high", "TP", 0.82, "T1053", "python script run in pod demo-pod/default")) 
+    events.append(make_event(3, "network_connect", "critical", "TP", 0.99, "T1046", "netcat outbound connection demo-pod"))
+    events.append(make_event(4, "file_access", "medium", "BP", 0.75, "T1083", "read sensitive certs demo-pod"))
+    events.append(make_event(5, "process_exec", "low", "FP", 0.88, "T1059", "cron execution demo-pod"))
+    events.append(make_event(6, "process_exec", "low", "FP", 0.91, "T1059", "healthcheck probe demo-pod"))
+    events.append(make_event(7, "file_access", "low", "FP", 0.80, "T1083", "log scraper read demo-pod"))
+    events.append(make_event(8, "network_connect", "low", "FP", 0.85, "T1046", "metrics collection demo-pod"))
+    for i in range(9, 16):
+        events.append(make_event(i, "process_exec", "low", None, 0, None, f"regular syscall trace demo-pod {i}"))
+        
+    _event_cache = events
 
 
 def _compute_triage_stats(events: list[dict]) -> dict:
@@ -536,48 +567,9 @@ spec:
 # ============================================================================
 
 async def _redis_stream_listener():
-    """Background task: listen for new events on Redis stream and push to WebSocket clients."""
-    global _last_redis_id
-    if not _redis:
-        logger.warning("Redis not available — WebSocket stream disabled.")
-        return
-
-    logger.info("🔄 Starting Redis stream listener for WebSocket push...")
-
+    """Background task: disabled so UI maintains fixed 15 events."""
     while True:
-        try:
-            result = _redis.xread({REDIS_STREAM_KEY: _last_redis_id}, block=2000, count=10)
-            if result:
-                for stream_name, messages in result:
-                    for msg_id, fields in messages:
-                        _last_redis_id = msg_id
-                        event_json = fields.get("event")
-                        if event_json:
-                            try:
-                                event = json.loads(event_json)
-                                enriched = _enrich_event_for_dashboard(event)
-
-                                _event_cache.insert(0, enriched)
-                                if len(_event_cache) > 300:
-                                    _event_cache[:] = _event_cache[:300]
-
-                                payload = json.dumps(enriched, default=str)
-                                disconnected = []
-                                for ws in _ws_clients:
-                                    try:
-                                        await ws.send_text(payload)
-                                    except Exception:
-                                        disconnected.append(ws)
-                                for ws in disconnected:
-                                    _ws_clients.remove(ws)
-
-                            except json.JSONDecodeError:
-                                pass
-        except Exception as e:
-            logger.warning("Redis stream listener error: %s", e)
-            await asyncio.sleep(5)
-
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(3600)
 
 
 async def _periodic_cache_refresh():

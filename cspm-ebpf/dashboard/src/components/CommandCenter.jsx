@@ -39,9 +39,9 @@ export default function CommandCenter() {
   const filterRatio = Math.round(((fpCount + bpCount) / totalTriaged) * 100)
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0a0e1a]">
+    <div className="h-full flex flex-col overflow-hidden bg-[#0a0e1a]">
       {/* ── TOP STATUS STRIP ────────────────────────────────────────── */}
-      <div className="px-6 py-5 border-b border-border flex items-stretch gap-4 overflow-x-auto bg-muted/10 shadow-sm z-10 relative">
+      <div className="shrink-0 px-6 py-5 border-b border-border flex items-stretch gap-4 overflow-x-auto bg-muted/10 shadow-sm z-10 relative">
         
         {/* Security Score */}
         <div className="glass-card flex-1 min-w-[220px] p-5 flex flex-col justify-between">
@@ -87,10 +87,10 @@ export default function CommandCenter() {
 
       {/* ── MAIN BODY ─────────────────────────────────────────────────
           Cluster map is dominant (8 col). Right panel stacks secondary data. */}
-      <div className="flex h-[calc(100%-57px)]">
+      <div className="flex-1 flex overflow-hidden">
 
         {/* LEFT: Cluster Map */}
-        <div className="flex-1 border-r border-border flex flex-col overflow-hidden bg-background">
+        <div className="flex-1 min-w-0 border-r border-border flex flex-col overflow-hidden bg-background">
           <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted/5">
             <div className="flex items-center gap-3">
               <div className="p-1.5 bg-primary/10 rounded-md border border-primary/20">
@@ -299,7 +299,7 @@ function LiveNodeGraph({ cluster, events }) {
   return (
     <div className="w-full h-full flex relative">
       <div className={`flex-1 flex flex-col justify-center items-center transition-all ${selectedNodeId ? 'w-2/3 pr-64' : 'w-full'}`}>
-        <svg className="w-full max-h-[580px]" viewBox="0 20 700 510" preserveAspectRatio="xMidYMid meet">
+        <svg className="w-full h-full" viewBox="0 20 720 520" preserveAspectRatio="xMidYMid meet">
           {renderLines()}
           {mapNodes.map(renderNode)}
 

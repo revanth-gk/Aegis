@@ -212,9 +212,12 @@ PYTHONPATH="$PWD" python3 -m uvicorn remediation.server:app --host 0.0.0.0 --por
 REMEDIATION_PID=$!
 echo "🛡️ Remediation API: http://127.0.0.1:8002/api/remediation"
 
-cd dashboard && npm run dev > /tmp/dashboard_ui.log 2>&1 &
+PYTHONPATH="$PWD" python3 -m uvicorn attacker-dashboard.app:app --host 0.0.0.0 --port 8003 > attacker_api.log 2>&1 &
+ATTACKER_PID=$!
+echo "⚔️ Attacker Control: http://127.0.0.1:8003"
+
+npm --prefix dashboard run dev > /tmp/dashboard_ui.log 2>&1 &
 DASHBOARD_UI_PID=$!
-cd ..
 echo "🖥️  Main Dashboard UI: http://localhost:3000"
 
 echo "============================================================"

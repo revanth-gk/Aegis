@@ -43,7 +43,7 @@ function App() {
       setWsConnected(true)
     }
 
-    ws.onmessage = (msg) => {
+      ws.onmessage = (msg) => {
       try {
         const event = JSON.parse(msg.data)
         addEvent(event)
@@ -55,6 +55,7 @@ function App() {
 
         // Periodically refresh immunity score
         if (Math.random() < 0.3) fetchImmunityScore()
+
       } catch (e) {
         console.error('WS parse error:', e)
       }
@@ -86,25 +87,25 @@ function App() {
     switch (currentPage) {
       case 'command':
         return (
-          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
+          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 flex flex-col overflow-hidden">
             <CommandCenter />
           </motion.div>
         )
       case 'ledger':
         return (
-          <motion.div key="ledger" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
+          <motion.div key="ledger" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 flex flex-col overflow-hidden">
             <IncidentLedger />
           </motion.div>
         )
       case 'forensics':
         return (
-          <motion.div key="forensics" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
+          <motion.div key="forensics" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 flex flex-col overflow-hidden">
             <ForensicsPanel />
           </motion.div>
         )
       default:
         return (
-          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 overflow-y-auto">
+          <motion.div key="command" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="flex-1 flex flex-col overflow-hidden">
             <CommandCenter />
           </motion.div>
         )
