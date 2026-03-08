@@ -51,8 +51,8 @@ GOOGLE_API_KEY_2 = os.getenv("GOOGLE_API_KEY_2")
 GOOGLE_API_KEY_3 = os.getenv("GOOGLE_API_KEY_3")
 GOOGLE_API_KEYS = [k for k in [GOOGLE_API_KEY, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3] if k]
 
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
-LLM_MODEL_FALLBACK = os.getenv("LLM_MODEL_FALLBACK", "gemini-1.5-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-pro")
+LLM_MODEL_FALLBACK = os.getenv("LLM_MODEL_FALLBACK", "gemini-2.0-flash")
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
