@@ -47,6 +47,12 @@ FORWARDER_API_URL = os.getenv("FORWARDER_API_URL", "http://localhost:8081")
 DASHBOARD_API_PORT = int(os.getenv("DASHBOARD_API_PORT", "8080"))
 POLICIES_DIR = os.getenv("POLICIES_DIR", os.path.join(os.path.dirname(__file__), "policies"))
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY_2 = os.getenv("GOOGLE_API_KEY_2")
+GOOGLE_API_KEY_3 = os.getenv("GOOGLE_API_KEY_3")
+GOOGLE_API_KEYS = [k for k in [GOOGLE_API_KEY, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3] if k]
+
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+LLM_MODEL_FALLBACK = os.getenv("LLM_MODEL_FALLBACK", "gemini-1.5-flash")
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -94,12 +100,13 @@ except Exception as e:
 _genai_client = None
 
 try:
-    if GOOGLE_API_KEY:
+    if GOOGLE_API_KEYS:
         from google import genai
-        _genai_client = genai.Client(api_key=GOOGLE_API_KEY)
-        logger.info("✅ Gemini AI client initialized for RAG YAML generation")
+        # Initialize the global client with the primary key
+        _genai_client = genai.Client(api_key=GOOGLE_API_KEYS[0])
+        logger.info("✅ Gemini AI client initialized with %d keys", len(GOOGLE_API_KEYS))
     else:
-        logger.warning("⚠️  GOOGLE_API_KEY not set. RAG YAML generation will use templates.")
+        logger.warning("⚠️  GOOGLE_API_KEYS not set. RAG YAML generation will use templates.")
 except Exception as e:
     logger.warning("⚠️  Gemini AI client not available (%s). RAG YAML generation will use templates.", e)
 
@@ -108,7 +115,7 @@ def _generate_rag_yaml(event: dict, mitre: dict, reasoning_text: str) -> str:
     """
     Generate contextual Kubernetes remediation YAML using Gemini AI (RAG).
 
-    Falls back to template-based generation if AI is unavailable.
+    Falls back to a secondary model, then to template-based generation if AI is unavailable.
     """
     telemetry = event.get("telemetry", {})
     pod = telemetry.get("pod", "affected-pod")
@@ -150,25 +157,42 @@ REQUIREMENTS:
 
 Output ONLY the raw YAML content, starting with "apiVersion:". No markdown, no code fences, no explanation."""
 
-    try:
-        response = _genai_client.models.generate_content(
-            model=os.getenv("LLM_MODEL", "gemini-2.5-flash"),
-            contents=prompt,
-        )
-        yaml_text = response.text.strip()
+    models_to_try = [LLM_MODEL, LLM_MODEL_FALLBACK]
+    
+    # Try every combination of API Key and Model
+    for key in GOOGLE_API_KEYS:
+        # Update client if we are using a fallback key
+        try:
+            temp_client = genai.Client(api_key=key)
+            for model in models_to_try:
+                try:
+                    logger.info("Attempting YAML generation with model: %s (Key: %s...)", 
+                                model, key[:8] if key else "None")
+                    response = temp_client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                    )
+                    yaml_text = response.text.strip()
 
-        # Strip markdown fences if the model added them
-        if yaml_text.startswith("```"):
-            lines = yaml_text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            yaml_text = "\n".join(lines).strip()
+                    # Strip markdown fences if the model added them
+                    if yaml_text.startswith("```"):
+                        lines = yaml_text.split("\n")
+                        lines = [l for l in lines if not l.strip().startswith("```")]
+                        yaml_text = "\n".join(lines).strip()
 
-        # Validate YAML
-        yaml.safe_load(yaml_text)
-        return yaml_text
-    except Exception as e:
-        logger.warning("RAG YAML generation failed (%s), falling back to template", e)
-        return _generate_yaml_fix(grade, event, mitre)
+                    # Validate YAML
+                    yaml.safe_load(yaml_text)
+                    logger.info("Successfully generated YAML with model: %s", model)
+                    return yaml_text
+                except Exception as me:
+                    logger.warning("YAML generation failed with model %s: %s", model, me)
+                    continue
+        except Exception as ce:
+            logger.warning("Failed to initialize temp Gemini client for key %s: %s", key[:8], ce)
+            continue
+
+    logger.warning("All Gemini keys and models failed for RAG YAML generation, falling back to template")
+    return _generate_yaml_fix(grade, event, mitre)
 
 # ── In-Memory State ───────────────────────────────────────────────
 _event_cache: list[dict] = []

@@ -41,7 +41,12 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-pro")
+LLM_MODEL_FALLBACK = os.getenv("LLM_MODEL_FALLBACK", "gemini-1.5-flash")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY_2 = os.getenv("GOOGLE_API_KEY_2")
+GOOGLE_API_KEY_3 = os.getenv("GOOGLE_API_KEY_3")
+GOOGLE_API_KEYS = [k for k in [GOOGLE_API_KEY, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3] if k]
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST")
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
@@ -71,21 +76,45 @@ if not OFFLINE_MODE:
         logger.exception("Failed to initialize HuggingFace embeddings")
 
 # --- Gemini Client (new google-genai SDK) ---
-if GOOGLE_API_KEY and not OFFLINE_MODE:
+if GOOGLE_API_KEYS and not OFFLINE_MODE:
     try:
-        _genai_client = genai.Client(api_key=GOOGLE_API_KEY)
-        _llm = ChatGoogleGenerativeAI(
-            model=LLM_MODEL,
-            api_key=GOOGLE_API_KEY,
-            temperature=0.3,
-            max_tokens=2000
-        )
-        ORCHESTRATOR_AVAILABLE = True
-        logger.info("Gemini client initialized successfully (google-genai SDK)")
+        # Use first key for the SDK client (metrics/checks)
+        _genai_client = genai.Client(api_key=GOOGLE_API_KEYS[0])
+        
+        # Build LLM fallback chain across multiple keys and potentially models
+        llm_instances = []
+        
+        # Define models to rotate through
+        models = [LLM_MODEL, LLM_MODEL_FALLBACK]
+        
+        for key in GOOGLE_API_KEYS:
+            for model in models:
+                llm_instances.append(
+                    ChatGoogleGenerativeAI(
+                        model=model,
+                        api_key=key,
+                        temperature=0.3,
+                        max_tokens=2000
+                    )
+                )
+        
+        if llm_instances:
+            # Chain them: First one is primary, others are fallbacks
+            primary = llm_instances[0]
+            if len(llm_instances) > 1:
+                _llm = primary.with_fallbacks(llm_instances[1:])
+            else:
+                _llm = primary
+                
+            ORCHESTRATOR_AVAILABLE = True
+            logger.info(
+                f"Gemini chain initialized with {len(GOOGLE_API_KEYS)} keys "
+                f"and {len(llm_instances)} fallback permutations."
+            )
     except Exception as e:
-        logger.exception("Failed to initialize Gemini client")
+        logger.exception("Failed to initialize Gemini client chain")
 else:
-    logger.warning("GOOGLE_API_KEY not set or OFFLINE_MODE. Generative AI disabled.")
+    logger.warning("No GOOGLE_API_KEYS set or OFFLINE_MODE. Generative AI disabled.")
 
 # --- Pinecone Client (v3 SDK) ---
 if PINECONE_API_KEY and PINECONE_INDEX_HOST and not OFFLINE_MODE:
@@ -246,6 +275,33 @@ def extract_mitre_techniques(text: str) -> list:
         })
 
     return techniques
+
+
+def build_ultimate_fallback_report(state: SentinelState) -> str:
+    """Builds a relevant static report when all AI keys fail."""
+    raw_event = state.get("raw_event", {})
+    process = raw_event.get("process", "unknown")
+    syscall = raw_event.get("syscall", "unknown")
+    path = raw_event.get("file_path", raw_event.get("path", "unknown"))
+    pod = raw_event.get("pod_name", "unknown")
+    
+    attack_type = infer_attack_type(raw_event)
+    severity = infer_severity(state.get("guide_grade", "TP"), state.get("guide_score", 0.8))
+    
+    report = f"""REPORT: [AUTOMATED FALLBACK ANALYSIS]
+The system detected a high-risk '{attack_type}' event in pod '{pod}'. 
+The process '{process}' attempted a sensitive '{syscall}' operation on '{path}'. 
+This pattern is strongly associated with malicious activity. 
+Immediate inspection of the container and its network connections is advised.
+
+SEVERITY: {severity}
+ATTACK_TYPE: {attack_type}
+WHAT_HAPPENED: Process '{process}' triggered '{syscall}' on a sensitive path.
+POTENTIAL_IMPACT: Unauthorized access or control of the container environment.
+RECOMMENDED_ACTION: Quarantine the pod and review audit logs for further lateral movement.
+FIX_DESCRIPTION: Applies standard Kubernetes security hardening and network isolation.
+"""
+    return report
 
 
 def infer_severity(guide_grade: str, guide_score: float) -> str:
@@ -584,18 +640,22 @@ YAML FIX:
         }
     except Exception as e:
         duration = (time.time() - start_time) * 1000
-        logger.exception(f"[NODE C] report_generator FAILED | {duration:.0f}ms")
+        logger.error(f"[NODE C] report_generator LLM CHAIN FAILED | {duration:.0f}ms | {e}")
+        
+        # Build ultimate fallback report
+        fallback_text = build_ultimate_fallback_report(state)
         yaml_fix = generate_safe_default_yaml(state.get("raw_event", {}))
+        
         return {
             **state,
-            "error": str(e),
-            "final_report": f"Error in report_generator: {e}",
+            "error": f"LLM Failure: {str(e)}",
+            "final_report": fallback_text,
             "yaml_fix": yaml_fix,
             "severity": infer_severity(state.get("guide_grade", "TP"), state.get("guide_score", 0.5)),
             "attack_type": infer_attack_type(state.get("raw_event", {})),
             "fix_type": infer_fix_type(yaml_fix),
-            "fix_description": "Default security hardening applied due to report generation failure.",
-            "mitre_techniques": []
+            "fix_description": "Default security hardening applied due to AI service disruption.",
+            "mitre_techniques": extract_mitre_techniques(state.get("mitre_context", ""))
         }
 
 
